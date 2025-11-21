@@ -64,6 +64,7 @@ import {
   onSnapshot,
   query,
   setDoc,
+  getDoc,
   persistentLocalCache,
 } from "firebase/firestore";
 
@@ -256,6 +257,9 @@ const App = () => {
   const [selectedYear, setSelectedYear] = useState("all"); // For filtering courses by year
   const [courseToAdd, setCourseToAdd] = useState(null); // Course pending semester/year selection
   const [readNotifications, setReadNotifications] = useState(new Set()); // Track read notifications
+  const [showNewCourseModal, setShowNewCourseModal] = useState(false); // Show/hide new course modal
+  const [catalog, setCatalog] = useState(INITIAL_CATALOG); // Course catalog (can be updated)
+  const [courseToDelete, setCourseToDelete] = useState(null); // Course pending deletion confirmation
 
   // Track if Firebase is actually working (not just initialized)
   const [firebaseAvailable, setFirebaseAvailable] = useState(false);
@@ -470,6 +474,7 @@ const App = () => {
         const localTasks = localStorage.getItem("openu-tasks");
         const localPersonalTasks = localStorage.getItem("openu-personal-tasks");
         const localReadNotifications = localStorage.getItem("openu-read-notifications");
+        const localCatalog = localStorage.getItem("openu-catalog");
 
         if (localCourses) setMyCourses(JSON.parse(localCourses));
         if (localTasks) setTasks(JSON.parse(localTasks));
@@ -477,6 +482,9 @@ const App = () => {
         if (localReadNotifications) {
           const parsed = JSON.parse(localReadNotifications);
           setReadNotifications(new Set(parsed));
+        }
+        if (localCatalog) {
+          setCatalog(JSON.parse(localCatalog));
         }
       } catch (e) {
         console.error("Error loading from localStorage:", e);
@@ -550,6 +558,48 @@ const App = () => {
       setUser({ uid: "local-user", isAnonymous: true, isLocal: true });
     }
 
+    // Load catalog from Firebase or localStorage
+    const loadCatalog = async () => {
+      const isLocalUser = user?.isLocal || !firebaseAvailable || !db || !user;
+      if (isLocalUser) {
+        try {
+          const localCatalog = localStorage.getItem("openu-catalog");
+          if (localCatalog) {
+            setCatalog(JSON.parse(localCatalog));
+          }
+        } catch (e) {
+          console.error("Error loading catalog from localStorage:", e);
+        }
+      } else {
+        try {
+          const catalogRef = doc(db, "artifacts", appId, "users", user.uid, "data", "catalog");
+          const catalogSnap = await getDoc(catalogRef);
+          if (catalogSnap.exists()) {
+            setCatalog(catalogSnap.data().courses || INITIAL_CATALOG);
+          } else {
+            // If catalog doesn't exist, use INITIAL_CATALOG and save it
+            setCatalog(INITIAL_CATALOG);
+            await setDoc(catalogRef, { courses: INITIAL_CATALOG }, { merge: true });
+          }
+        } catch (e) {
+          console.error("Error loading catalog from Firestore:", e);
+          // Fallback to localStorage on error
+          try {
+            const localCatalog = localStorage.getItem("openu-catalog");
+            if (localCatalog) {
+              setCatalog(JSON.parse(localCatalog));
+            }
+          } catch (localError) {
+            console.error("Error loading catalog from localStorage:", localError);
+          }
+        }
+      }
+    };
+
+    if (user) {
+      loadCatalog();
+    }
+
     return () => {
       if (unsubscribeCourses) unsubscribeCourses();
       if (unsubscribeTasks) unsubscribeTasks();
@@ -604,6 +654,47 @@ const App = () => {
   const saveEditedPersonalTask = (id, newText) => {
     updatePersonalTasksInDb(personalTasks.map((t) => (t.id === id ? { ...t, text: newText } : t)));
     setEditingPersonalTaskId(null);
+  };
+
+  const saveCatalogToDb = async (newCatalog) => {
+    setSyncingTemporarily();
+    const isLocalUser = user?.isLocal || !firebaseAvailable || !db || !user;
+    if (isLocalUser) {
+      // Save to localStorage if Firebase is not available
+      localStorage.setItem("openu-catalog", JSON.stringify(newCatalog));
+      setCatalog(newCatalog);
+      return;
+    }
+
+    try {
+      await setDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "data", "catalog"),
+        { courses: newCatalog },
+        { merge: true }
+      );
+      setCatalog(newCatalog);
+    } catch (error) {
+      console.error("Error saving catalog to Firestore:", error);
+      // Fallback to localStorage
+      localStorage.setItem("openu-catalog", JSON.stringify(newCatalog));
+      setCatalog(newCatalog);
+    }
+  };
+
+  const addCourseToCatalog = async (course) => {
+    // Check if course code already exists in catalog
+    if (catalog.find((c) => c.code === course.code.trim())) {
+      return false; // Course already exists
+    }
+
+    const newCatalog = [...catalog, course];
+    await saveCatalogToDb(newCatalog);
+    return true;
+  };
+
+  const deleteCourseFromCatalog = async (courseCode) => {
+    const newCatalog = catalog.filter((c) => c.code !== courseCode);
+    await saveCatalogToDb(newCatalog);
   };
 
   const addCourseToPlan = async (course, semester = null, year = null) => {
@@ -1437,6 +1528,214 @@ const App = () => {
     );
   };
 
+  const AddNewCourseModal = () => {
+    const [formData, setFormData] = useState({
+      code: "",
+      name: "",
+      nz: "",
+      category: "",
+    });
+    const [errors, setErrors] = useState({});
+
+    // Prevent body scroll when modal is open on mobile
+    useEffect(() => {
+      if (showNewCourseModal) {
+        document.body.style.overflow = "hidden";
+      }
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }, [showNewCourseModal]);
+
+    const validateForm = () => {
+      const newErrors = {};
+      if (!formData.code.trim()) {
+        newErrors.code = "מספר קורס הוא שדה חובה";
+      } else if (!/^\d+$/.test(formData.code.trim())) {
+        newErrors.code = "מספר קורס חייב להכיל רק ספרות";
+      }
+      if (!formData.name.trim()) {
+        newErrors.name = "שם קורס הוא שדה חובה";
+      }
+      const nzValue = Number(formData.nz);
+      if (!formData.nz || isNaN(nzValue) || nzValue < 0 || nzValue > 20) {
+        newErrors.nz = "נ\"ז הוא שדה חובה (חייב להיות בין 0 ל-20)";
+      }
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    };
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      if (!validateForm()) return;
+
+      // Check if course code already exists in catalog
+      if (catalog.find((c) => c.code === formData.code.trim())) {
+        setErrors({ code: "קורס עם מספר זה כבר קיים בקטלוג" });
+        return;
+      }
+
+      // Create course object
+      const newCourse = {
+        code: formData.code.trim(),
+        name: formData.name.trim(),
+        nz: Number(formData.nz),
+        ...(formData.category && { category: formData.category }),
+      };
+
+      // Add course to catalog
+      const success = await addCourseToCatalog(newCourse);
+      if (!success) {
+        setErrors({ code: "שגיאה בהוספת הקורס לקטלוג" });
+        return;
+      }
+
+      // Close modal and reset form
+      setShowNewCourseModal(false);
+      setFormData({ code: "", name: "", nz: "", category: "" });
+      setErrors({});
+    };
+
+    if (!showNewCourseModal) return null;
+
+    return (
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setShowNewCourseModal(false);
+            setFormData({ code: "", name: "", nz: "", category: "" });
+            setErrors({});
+          }
+        }}
+      >
+        <div className="bg-white rounded-xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+          <div className="p-3 sm:p-6 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-gray-800">הוסף קורס חדש</h2>
+            <button
+              onClick={() => {
+                setShowNewCourseModal(false);
+                setFormData({ code: "", name: "", nz: "", category: "" });
+                setErrors({});
+              }}
+              className="p-1.5 sm:p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 flex-shrink-0"
+            >
+              <X size={18} className="sm:w-5 sm:h-5" />
+            </button>
+          </div>
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto">
+            <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6" dir="rtl">
+              {/* Course Code */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  מספר קורס <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={formData.code}
+                  onChange={(e) => {
+                    // Only allow numeric input
+                    const value = e.target.value.replace(/\D/g, "");
+                    setFormData({ ...formData, code: value });
+                    if (errors.code) setErrors({ ...errors, code: "" });
+                  }}
+                  placeholder="למשל: 20476"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.code ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.code && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.code}</p>}
+              </div>
+
+              {/* Course Name */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  שם קורס <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value });
+                    if (errors.name) setErrors({ ...errors, name: "" });
+                  }}
+                  placeholder="שם הקורס"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.name ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.name && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.name}</p>}
+              </div>
+
+              {/* נ"ז Credits */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  נ"ז <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={formData.nz}
+                  onChange={(e) => {
+                    setFormData({ ...formData, nz: e.target.value });
+                    if (errors.nz) setErrors({ ...errors, nz: "" });
+                  }}
+                  placeholder="מספר נקודות זכות"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.nz ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.nz && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.nz}</p>}
+              </div>
+
+              {/* Category (Optional) */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  קטגוריה (אופציונלי)
+                </label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="w-full text-sm sm:text-base border border-gray-200 rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                >
+                  <option value="">לא נבחר</option>
+                  <option value="required_math">חובה מתמטיקה</option>
+                  <option value="required_cs">חובה מדמ״ח</option>
+                  <option value="elective">בחירה</option>
+                  <option value="seminar">סמינריון</option>
+                  <option value="workshop">סדנה</option>
+                </select>
+              </div>
+
+              {/* Submit Button */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewCourseModal(false);
+                    setFormData({ code: "", name: "", nz: "", category: "" });
+                    setErrors({});
+                  }}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg p-2 sm:p-3 text-sm sm:text-base font-medium transition-colors"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg p-2 sm:p-3 text-sm sm:text-base font-medium transition-colors"
+                >
+                  הוסף קורס
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const MyStudiesView = () => {
     const [activeId, setActiveId] = useState(null);
     const sensors = useSensors(
@@ -1510,6 +1809,17 @@ const App = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="space-y-8">
+          {/* Add New Course Button */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowNewCourseModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors font-medium text-sm sm:text-base"
+            >
+              <Plus size={18} className="sm:w-5 sm:h-5" />
+              הוסף קורס חדש
+            </button>
+          </div>
+
           {/* Semester and Year Filters */}
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1601,8 +1911,8 @@ const App = () => {
 
   const CatalogView = () => {
     const filteredCatalog = useMemo(() => {
-      return INITIAL_CATALOG.filter((c) => c.name.includes(searchTerm) || c.code.includes(searchTerm));
-    }, [searchTerm]);
+      return catalog.filter((c) => c.name.includes(searchTerm) || c.code.includes(searchTerm));
+    }, [searchTerm, catalog]);
 
     const categorizedCatalog = useMemo(() => {
       const grouped = { required_math: [], required_cs: [], elective: [], seminar: [], workshop: [] };
@@ -1615,8 +1925,8 @@ const App = () => {
 
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-full">
-        {/* Search */}
-        <div className="p-4 border-b border-gray-100 flex items-center gap-3">
+        {/* Search and Add Button */}
+        <div className="p-4 border-b border-gray-100 flex items-center gap-3 flex-wrap">
           <h2 className="text-lg font-bold text-gray-800 hidden md:block">קטלוג קורסים</h2>
           <div className="relative flex-1">
             <Search className="absolute right-3 top-2.5 text-gray-400 w-4 h-4" />
@@ -1628,6 +1938,13 @@ const App = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          <button
+            onClick={() => setShowNewCourseModal(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors font-medium text-sm sm:text-base whitespace-nowrap"
+          >
+            <Plus size={18} className="sm:w-5 sm:h-5" />
+            הוסף קורס חדש
+          </button>
         </div>
 
         {/* Catalog List */}
@@ -1674,7 +1991,7 @@ const App = () => {
                             )}
                           </div>
                         </div>
-                        <div onClick={(e) => e.stopPropagation()}>
+                        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2">
                           {isAdded ? (
                             <span className="text-green-600 flex items-center gap-1 text-xs bg-green-50 px-2 py-1 rounded">
                               <CheckCircle size={14} /> קיים
@@ -1687,6 +2004,13 @@ const App = () => {
                               <Plus size={14} /> הוסף
                             </button>
                           )}
+                          <button
+                            onClick={() => setCourseToDelete(course)}
+                            className="text-red-400 hover:bg-red-50 hover:text-red-600 p-1.5 rounded transition-colors"
+                            title="מחק קורס"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -2167,6 +2491,8 @@ const App = () => {
 
       {selectedCourseForDetails && <CourseDetailModal />}
 
+      <AddNewCourseModal />
+
       {/* Semester and Year Selection Modal */}
       {courseToAdd && (
         <SemesterYearSelectionModal
@@ -2177,6 +2503,60 @@ const App = () => {
           }}
           onClose={() => setCourseToAdd(null)}
         />
+      )}
+
+      {/* Delete Course Confirmation Modal */}
+      {courseToDelete && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setCourseToDelete(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="bg-red-50 p-2 rounded-full">
+                <AlertTriangle className="text-red-600" size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-800 mb-2">מחיקת קורס</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  האם אתה בטוח שברצונך למחוק את הקורס "{courseToDelete.name}" ({courseToDelete.code}) מהקטלוג?
+                  {myCourses.some((c) => c.code === courseToDelete.code) && (
+                    <span className="block mt-2 text-red-600 font-medium">
+                      שים לב: הקורס קיים בתכנית הלימודים שלך ולא יימחק משם.
+                    </span>
+                  )}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setCourseToDelete(null)}
+                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg px-4 py-2 transition-colors text-sm font-medium"
+                  >
+                    ביטול
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await deleteCourseFromCatalog(courseToDelete.code);
+                      setCourseToDelete(null);
+                    }}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 py-2 transition-colors text-sm font-medium"
+                  >
+                    מחק
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => setCourseToDelete(null)}
+                className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Firebase Error Popup */}
