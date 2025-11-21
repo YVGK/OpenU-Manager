@@ -25,7 +25,25 @@ import {
   Smartphone,
   Cloud,
   Loader2,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+  useDroppable,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { initializeApp } from "firebase/app";
 import {
   getAuth,
@@ -237,9 +255,128 @@ const App = () => {
   const [selectedSemester, setSelectedSemester] = useState("all"); // For filtering courses by semester
   const [selectedYear, setSelectedYear] = useState("all"); // For filtering courses by year
   const [courseToAdd, setCourseToAdd] = useState(null); // Course pending semester/year selection
+  const [readNotifications, setReadNotifications] = useState(new Set()); // Track read notifications
 
   // Track if Firebase is actually working (not just initialized)
   const [firebaseAvailable, setFirebaseAvailable] = useState(false);
+  const [firebaseError, setFirebaseError] = useState(null); // Track Firebase connection errors
+
+  // Load read notifications from localStorage/Firebase
+  useEffect(() => {
+    const isLocalUser = user?.isLocal || !firebaseAvailable || !db || !user;
+
+    if (isLocalUser) {
+      // Load from localStorage
+      try {
+        const localReadNotifications = localStorage.getItem("openu-read-notifications");
+        if (localReadNotifications) {
+          const parsed = JSON.parse(localReadNotifications);
+          setReadNotifications(new Set(parsed));
+        }
+      } catch (e) {
+        console.error("Error loading read notifications from localStorage:", e);
+      }
+    } else {
+      // Load from Firebase
+      try {
+        const readNotificationsRef = doc(db, "artifacts", appId, "users", user.uid, "data", "readNotifications");
+        const unsubscribe = onSnapshot(
+          readNotificationsRef,
+          (snap) => {
+            if (snap.exists()) {
+              const data = snap.data();
+              setReadNotifications(new Set(data.taskIds || []));
+            }
+          },
+          (error) => {
+            console.error("Error loading read notifications from Firestore:", error);
+            // Fallback to localStorage
+            try {
+              const localReadNotifications = localStorage.getItem("openu-read-notifications");
+              if (localReadNotifications) {
+                const parsed = JSON.parse(localReadNotifications);
+                setReadNotifications(new Set(parsed));
+              }
+            } catch (e) {
+              console.error("Error loading read notifications from localStorage:", e);
+            }
+          }
+        );
+        return () => unsubscribe();
+      } catch (error) {
+        console.error("Error setting up read notifications listener:", error);
+      }
+    }
+  }, [user, firebaseAvailable, db]);
+
+  // Save read notifications to localStorage/Firebase
+  const saveReadNotifications = async (newReadNotifications) => {
+    const isLocalUser = user?.isLocal || !firebaseAvailable || !db || !user;
+
+    if (isLocalUser) {
+      // Save to localStorage
+      try {
+        localStorage.setItem("openu-read-notifications", JSON.stringify(Array.from(newReadNotifications)));
+      } catch (e) {
+        console.error("Error saving read notifications to localStorage:", e);
+      }
+    } else {
+      // Save to Firebase
+      try {
+        await setDoc(
+          doc(db, "artifacts", appId, "users", user.uid, "data", "readNotifications"),
+          { taskIds: Array.from(newReadNotifications) },
+          { merge: true }
+        );
+        // Also save to localStorage as backup
+        try {
+          localStorage.setItem("openu-read-notifications", JSON.stringify(Array.from(newReadNotifications)));
+        } catch (e) {
+          console.error("Error saving read notifications to localStorage:", e);
+        }
+      } catch (error) {
+        console.error("Error saving read notifications to Firestore:", error);
+        // Fallback to localStorage
+        try {
+          localStorage.setItem("openu-read-notifications", JSON.stringify(Array.from(newReadNotifications)));
+        } catch (e) {
+          console.error("Error saving read notifications to localStorage:", e);
+        }
+      }
+    }
+  };
+
+  // Close notifications when clicking outside and prevent body scroll on mobile
+  useEffect(() => {
+    if (!showNotifications) {
+      document.body.style.overflow = "";
+      return;
+    }
+
+    // Prevent body scroll on mobile when notification is open
+    if (window.innerWidth < 768) {
+      document.body.style.overflow = "hidden";
+    }
+
+    const handleClickOutside = (event) => {
+      const target = event.target;
+      // Check if click is outside the notification popup and bell button
+      if (!target.closest('[aria-label="התראות"]') && !target.closest(".notification-popup")) {
+        setShowNotifications(false);
+      }
+    };
+
+    // Add listener after a short delay to avoid immediate closing
+    const timeoutId = setTimeout(() => {
+      document.addEventListener("click", handleClickOutside);
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener("click", handleClickOutside);
+      document.body.style.overflow = "";
+    };
+  }, [showNotifications]);
 
   // --- Auth & Sync ---
   useEffect(() => {
@@ -332,10 +469,15 @@ const App = () => {
         const localCourses = localStorage.getItem("openu-courses");
         const localTasks = localStorage.getItem("openu-tasks");
         const localPersonalTasks = localStorage.getItem("openu-personal-tasks");
+        const localReadNotifications = localStorage.getItem("openu-read-notifications");
 
         if (localCourses) setMyCourses(JSON.parse(localCourses));
         if (localTasks) setTasks(JSON.parse(localTasks));
         if (localPersonalTasks) setPersonalTasks(JSON.parse(localPersonalTasks));
+        if (localReadNotifications) {
+          const parsed = JSON.parse(localReadNotifications);
+          setReadNotifications(new Set(parsed));
+        }
       } catch (e) {
         console.error("Error loading from localStorage:", e);
       }
@@ -356,6 +498,8 @@ const App = () => {
         (error) => {
           console.error("Firestore courses error:", error);
           setIsSyncing(false);
+          // Show error popup on connection failure
+          setFirebaseError("חיבור ל-Firebase נכשל. הנתונים יישמרו במצב מקומי.");
           // Fall back to localStorage on error
           setFirebaseAvailable(false);
           setUser({ uid: "local-user", isAnonymous: true, isLocal: true });
@@ -371,6 +515,8 @@ const App = () => {
         (error) => {
           console.error("Firestore tasks error:", error);
           setIsSyncing(false);
+          // Show error popup on connection failure
+          setFirebaseError("חיבור ל-Firebase נכשל. הנתונים יישמרו במצב מקומי.");
           setFirebaseAvailable(false);
           setUser({ uid: "local-user", isAnonymous: true, isLocal: true });
         }
@@ -389,6 +535,8 @@ const App = () => {
         (error) => {
           console.error("Firestore notes error:", error);
           setIsSyncing(false);
+          // Show error popup on connection failure
+          setFirebaseError("חיבור ל-Firebase נכשל. הנתונים יישמרו במצב מקומי.");
           setFirebaseAvailable(false);
           setUser({ uid: "local-user", isAnonymous: true, isLocal: true });
         }
@@ -396,6 +544,8 @@ const App = () => {
     } catch (error) {
       console.error("Error setting up Firestore listeners:", error);
       setIsSyncing(false);
+      // Show error popup on connection failure
+      setFirebaseError("חיבור ל-Firebase נכשל. הנתונים יישמרו במצב מקומי.");
       setFirebaseAvailable(false);
       setUser({ uid: "local-user", isAnonymous: true, isLocal: true });
     }
@@ -466,7 +616,7 @@ const App = () => {
     }
 
     setSyncingTemporarily();
-    const { id, ...courseData } = { ...course, status: "planned", grade: null, semester, year };
+    const { id, ...courseData } = { ...course, status: "planned", grade: null, semester, year, comments: "" };
 
     const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
     if (isLocalUser) {
@@ -681,10 +831,16 @@ const App = () => {
     }
   };
 
-  const openCourseFromTask = (courseId) => {
+  const openCourseFromTask = async (courseId, taskId = null) => {
     const course = myCourses.find((c) => c.code === courseId);
     if (course) setSelectedCourseForDetails(course);
     setShowNotifications(false);
+    // Mark notification as read
+    if (taskId) {
+      const newReadNotifications = new Set([...readNotifications, taskId]);
+      setReadNotifications(newReadNotifications);
+      await saveReadNotifications(newReadNotifications);
+    }
   };
 
   const totalNZ = useMemo(
@@ -715,6 +871,11 @@ const App = () => {
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   }, [tasks]);
 
+  // Get unread urgent tasks
+  const unreadUrgentTasks = useMemo(() => {
+    return urgentTasks.filter((t) => !readNotifications.has(t.id));
+  }, [urgentTasks, readNotifications]);
+
   // Semester and Year Selection Modal Component
   const SemesterYearSelectionModal = ({ course, onSelect, onClose }) => {
     const [tempSemester, setTempSemester] = useState(null);
@@ -732,7 +893,14 @@ const App = () => {
     };
 
     return (
-      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            onClose();
+          }
+        }}
+      >
         <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6">
           <div className="flex justify-between items-start mb-4">
             <div>
@@ -961,7 +1129,7 @@ const App = () => {
           </div>
           <div className="flex items-baseline gap-1">
             <span className="text-3xl font-bold text-gray-800">{totalNZ}</span>
-            <span className="text-sm text-gray-400 font-normal">/ 108</span>
+            <span className="text-sm text-gray-400 font-normal">/ 120</span>
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28">
@@ -1011,15 +1179,29 @@ const App = () => {
                 <div>
                   <h3 className="font-bold text-orange-800 text-sm">שים לב: מועדים קרובים</h3>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {urgentTasks.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => openCourseFromTask(t.courseId)}
-                        className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded hover:bg-orange-100 transition-colors"
-                      >
-                        {t.title} ({new Date(t.date).toLocaleDateString("he-IL")})
-                      </button>
-                    ))}
+                    {urgentTasks.map((t) => {
+                      const isRead = readNotifications.has(t.id);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => openCourseFromTask(t.courseId, t.id)}
+                          className={`text-xs bg-white border px-2 py-0.5 rounded transition-colors flex items-center gap-1 ${
+                            isRead
+                              ? "border-gray-200 text-gray-600 hover:bg-gray-50"
+                              : "border-orange-200 text-orange-700 hover:bg-orange-100"
+                          }`}
+                        >
+                          {isRead ? (
+                            <CheckCircle size={12} className="text-green-500" />
+                          ) : (
+                            <AlertTriangle size={12} className="text-orange-500" />
+                          )}
+                          <span>
+                            {t.title} ({new Date(t.date).toLocaleDateString("he-IL")})
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1132,7 +1314,138 @@ const App = () => {
     );
   };
 
+  // Sortable Course Card Component
+  const SortableCourseCard = ({ course, isDragging }) => {
+    const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+      id: course.id,
+    });
+
+    const style = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow group relative"
+      >
+        <div className="flex justify-between items-start mb-2">
+          <div className="flex items-center gap-2">
+            {/* Drag Handle */}
+            <div
+              {...attributes}
+              {...listeners}
+              className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 p-1 -mr-1 -ml-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={16} />
+            </div>
+            <span className="bg-gray-100 text-gray-600 text-[10px] font-mono px-1.5 py-0.5 rounded">{course.code}</span>
+          </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedCourseForDetails(course);
+              }}
+              className="text-blue-500 hover:bg-blue-50 p-1 rounded"
+            >
+              <FileText size={16} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                removeCourse(course.id, course.code);
+              }}
+              className="text-red-400 hover:bg-red-50 p-1 rounded"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+        <h3
+          className="font-bold text-gray-800 mb-1 truncate cursor-pointer hover:text-blue-600"
+          onClick={() => setSelectedCourseForDetails(course)}
+          title={course.name}
+        >
+          {course.name}
+        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm text-gray-500">{course.nz} נ"ז</p>
+            {course.semester && (
+              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium">
+                {course.semester}
+              </span>
+            )}
+            {course.year && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">{course.year}</span>
+            )}
+          </div>
+          {course.category && CATEGORY_LABELS[course.category] && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${CATEGORY_LABELS[course.category].color}`}>
+              {CATEGORY_LABELS[course.category].label}
+            </span>
+          )}
+        </div>
+        <select
+          className="w-full text-sm border-gray-200 rounded-md bg-gray-50 p-1.5 focus:ring-2 focus:ring-blue-500 outline-none"
+          value={course.status}
+          onChange={(e) => updateCourseStatus(course.id, e.target.value)}
+        >
+          {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+            <option key={key} value={key}>
+              {config.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  };
+
+  // Droppable Status Container Component
+  const DroppableStatusContainer = ({ statusKey, courses, label }) => {
+    const { setNodeRef, isOver } = useDroppable({
+      id: `status-${statusKey}`,
+    });
+
+    return (
+      <div
+        ref={setNodeRef}
+        className={`space-y-3 ${isOver ? "bg-blue-50 rounded-lg p-2 border-2 border-blue-300 border-dashed" : ""}`}
+      >
+        <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+          {label}
+          <span className="text-sm font-normal text-gray-400">({courses.length})</span>
+        </h2>
+        {courses.length === 0 && (
+          <div className="p-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm text-center min-h-[100px] flex items-center justify-center">
+            אין קורסים בסטטוס זה
+          </div>
+        )}
+        <SortableContext items={courses.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {courses.map((course) => (
+              <SortableCourseCard key={course.id} course={course} />
+            ))}
+          </div>
+        </SortableContext>
+      </div>
+    );
+  };
+
   const MyStudiesView = () => {
+    const [activeId, setActiveId] = useState(null);
+    const sensors = useSensors(
+      useSensor(PointerSensor),
+      useSensor(KeyboardSensor, {
+        coordinateGetter: sortableKeyboardCoordinates,
+      })
+    );
+
     // Filter courses by semester if selected
     const filteredCourses = useMemo(() => {
       if (selectedSemester === "all") return myCourses;
@@ -1158,154 +1471,131 @@ const App = () => {
       return Array.from(years).sort();
     }, [myCourses]);
 
+    const handleDragEnd = (event) => {
+      const { active, over } = event;
+
+      if (!over) {
+        setActiveId(null);
+        return;
+      }
+
+      const activeId = active.id;
+      const overId = over.id;
+
+      // Find the course being dragged
+      const draggedCourse = myCourses.find((c) => c.id === activeId);
+      if (!draggedCourse) {
+        setActiveId(null);
+        return;
+      }
+
+      // Check if dropped on a status container
+      if (overId.toString().startsWith("status-")) {
+        const newStatus = overId.toString().replace("status-", "");
+        if (newStatus !== draggedCourse.status) {
+          updateCourseStatus(activeId, newStatus);
+        }
+      }
+
+      setActiveId(null);
+    };
+
+    const draggedCourse = activeId ? myCourses.find((c) => c.id === activeId) : null;
+
     return (
-      <div className="space-y-8">
-        {/* Semester and Year Filters */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
-              <Calendar size={16} /> סינון לפי סמסטר ושנה
-            </h3>
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setSelectedSemester("all")}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                  selectedSemester === "all"
-                    ? "bg-blue-600 text-white shadow-sm font-medium"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                כל הסמסטרים
-              </button>
-              {availableSemesters.map((sem) => (
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={(e) => setActiveId(e.active.id)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="space-y-8">
+          {/* Semester and Year Filters */}
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                <Calendar size={16} /> סינון לפי סמסטר ושנה
+              </h3>
+              <div className="flex gap-2 flex-wrap">
                 <button
-                  key={sem}
-                  onClick={() => setSelectedSemester(sem)}
+                  onClick={() => setSelectedSemester("all")}
                   className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                    selectedSemester === sem
+                    selectedSemester === "all"
                       ? "bg-blue-600 text-white shadow-sm font-medium"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
-                  {sem}
+                  כל הסמסטרים
                 </button>
-              ))}
+                {availableSemesters.map((sem) => (
+                  <button
+                    key={sem}
+                    onClick={() => setSelectedSemester(sem)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                      selectedSemester === sem
+                        ? "bg-blue-600 text-white shadow-sm font-medium"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {sem}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="flex items-center justify-between flex-wrap gap-3 border-t border-gray-200 pt-4">
-            <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
-              <Calendar size={16} /> שנה
-            </h3>
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setSelectedYear("all")}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                  selectedYear === "all"
-                    ? "bg-green-600 text-white shadow-sm font-medium"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                כל השנים
-              </button>
-              {availableYears.map((year) => (
+            <div className="flex items-center justify-between flex-wrap gap-3 border-t border-gray-200 pt-4">
+              <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                <Calendar size={16} /> שנה
+              </h3>
+              <div className="flex gap-2 flex-wrap">
                 <button
-                  key={year}
-                  onClick={() => setSelectedYear(year)}
+                  onClick={() => setSelectedYear("all")}
                   className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                    selectedYear === year
+                    selectedYear === "all"
                       ? "bg-green-600 text-white shadow-sm font-medium"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
-                  {year}
+                  כל השנים
                 </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {["active", "registered", "planned", "finished"].map((statusKey) => (
-          <div key={statusKey} className="space-y-3">
-            <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
-              {STATUS_CONFIG[statusKey].label}
-              <span className="text-sm font-normal text-gray-400">({groupedCourses[statusKey].length})</span>
-            </h2>
-            {groupedCourses[statusKey].length === 0 && (
-              <div className="p-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm text-center">
-                אין קורסים בסטטוס זה
+                {availableYears.map((year) => (
+                  <button
+                    key={year}
+                    onClick={() => setSelectedYear(year)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                      selectedYear === year
+                        ? "bg-green-600 text-white shadow-sm font-medium"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {year}
+                  </button>
+                ))}
               </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {groupedCourses[statusKey].map((course) => (
-                <div
-                  key={course.id}
-                  className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow group relative"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="bg-gray-100 text-gray-600 text-[10px] font-mono px-1.5 py-0.5 rounded">
-                      {course.code}
-                    </span>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => setSelectedCourseForDetails(course)}
-                        className="text-blue-500 hover:bg-blue-50 p-1 rounded"
-                      >
-                        <FileText size={16} />
-                      </button>
-                      <button
-                        onClick={() => removeCourse(course.id, course.code)}
-                        className="text-red-400 hover:bg-red-50 p-1 rounded"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                  <h3
-                    className="font-bold text-gray-800 mb-1 truncate cursor-pointer hover:text-blue-600"
-                    onClick={() => setSelectedCourseForDetails(course)}
-                    title={course.name}
-                  >
-                    {course.name}
-                  </h3>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm text-gray-500">{course.nz} נ"ז</p>
-                      {course.semester && (
-                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium">
-                          {course.semester}
-                        </span>
-                      )}
-                      {course.year && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">
-                          {course.year}
-                        </span>
-                      )}
-                    </div>
-                    {course.category && CATEGORY_LABELS[course.category] && (
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded border ${CATEGORY_LABELS[course.category].color}`}
-                      >
-                        {CATEGORY_LABELS[course.category].label}
-                      </span>
-                    )}
-                  </div>
-                  <select
-                    className="w-full text-sm border-gray-200 rounded-md bg-gray-50 p-1.5 focus:ring-2 focus:ring-blue-500 outline-none"
-                    value={course.status}
-                    onChange={(e) => updateCourseStatus(course.id, e.target.value)}
-                  >
-                    {Object.entries(STATUS_CONFIG).map(([key, config]) => (
-                      <option key={key} value={key}>
-                        {config.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
             </div>
           </div>
-        ))}
-      </div>
+
+          {["active", "registered", "planned", "finished"].map((statusKey) => (
+            <DroppableStatusContainer
+              key={statusKey}
+              statusKey={statusKey}
+              courses={groupedCourses[statusKey]}
+              label={STATUS_CONFIG[statusKey].label}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {draggedCourse ? (
+            <div className="bg-white p-4 rounded-lg shadow-lg border-2 border-blue-400 opacity-90 rotate-2">
+              <div className="flex justify-between items-start mb-2">
+                <span className="bg-gray-100 text-gray-600 text-[10px] font-mono px-1.5 py-0.5 rounded">
+                  {draggedCourse.code}
+                </span>
+              </div>
+              <h3 className="font-bold text-gray-800 mb-1 truncate">{draggedCourse.name}</h3>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
     );
   };
 
@@ -1353,14 +1643,22 @@ const App = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {courses.map((course) => {
                     const isAdded = myCourses.some((c) => c.code === course.code);
+                    // Check if course exists in myCourses to get full details
+                    const existingCourse = myCourses.find((c) => c.code === course.code);
+                    const courseToShow = existingCourse || course;
                     return (
                       <div
                         key={course.code}
                         className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex justify-between items-center group hover:shadow-md transition-all"
                       >
-                        <div>
+                        <div
+                          className="flex-1 cursor-pointer"
+                          onClick={() => setSelectedCourseForDetails(courseToShow)}
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-gray-800 text-sm">{course.name}</span>
+                            <span className="font-bold text-gray-800 text-sm hover:text-blue-600 transition-colors">
+                              {course.name}
+                            </span>
                             <span className="text-[10px] bg-gray-100 text-gray-500 px-1 rounded font-mono">
                               {course.code}
                             </span>
@@ -1376,7 +1674,7 @@ const App = () => {
                             )}
                           </div>
                         </div>
-                        <div>
+                        <div onClick={(e) => e.stopPropagation()}>
                           {isAdded ? (
                             <span className="text-green-600 flex items-center gap-1 text-xs bg-green-50 px-2 py-1 rounded">
                               <CheckCircle size={14} /> קיים
@@ -1406,15 +1704,35 @@ const App = () => {
   const CourseDetailModal = () => {
     if (!selectedCourseForDetails) return null;
     const courseTasks = tasks.filter((t) => t.courseId === selectedCourseForDetails.code);
+
+    // Prevent body scroll when modal is open on mobile
+    useEffect(() => {
+      if (selectedCourseForDetails) {
+        document.body.style.overflow = "hidden";
+      }
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }, [selectedCourseForDetails]);
+
     return (
-      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-        <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
-          <div className="p-6 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-start">
-            <div>
-              <h2 className="text-xl font-bold text-gray-800">{selectedCourseForDetails.name}</h2>
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setSelectedCourseForDetails(null);
+          }
+        }}
+      >
+        <div className="bg-white rounded-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+          <div className="p-3 sm:p-6 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-start gap-2">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-800 break-words">
+                {selectedCourseForDetails.name}
+              </h2>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className="text-sm text-gray-500 font-mono">{selectedCourseForDetails.code}</span>
-                <StatusBadge status={selectedCourseForDetails.status} />
+                {selectedCourseForDetails.status && <StatusBadge status={selectedCourseForDetails.status} />}
                 {selectedCourseForDetails.semester && (
                   <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium">
                     {selectedCourseForDetails.semester}
@@ -1433,147 +1751,225 @@ const App = () => {
             </div>
             <button
               onClick={() => setSelectedCourseForDetails(null)}
-              className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500"
+              className="p-1.5 sm:p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 flex-shrink-0"
             >
-              <X size={20} />
+              <X size={18} className="sm:w-5 sm:h-5" />
             </button>
           </div>
-          <div className="p-6 space-y-8 flex-1 overflow-y-auto">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-              <h3 className="font-bold text-blue-900 mb-3 text-sm flex items-center gap-2">
-                <Plus size={16} /> הוספת מטלה
-              </h3>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const fd = new FormData(e.target);
-                  addTask(selectedCourseForDetails.code, {
-                    title: fd.get("title"),
-                    date: fd.get("date"),
-                    type: fd.get("type"),
-                  });
-                  e.target.reset();
-                }}
-                className="grid grid-cols-1 md:grid-cols-4 gap-3"
-              >
-                <input
-                  required
-                  name="title"
-                  placeholder="שם (למשל: ממ״ן 11)"
-                  className="border rounded p-2 text-sm col-span-1 outline-none focus:border-blue-500"
-                />
-                <input
-                  required
-                  name="date"
-                  type="date"
-                  className="border rounded p-2 text-sm col-span-1 outline-none focus:border-blue-500"
-                />
-                <select
-                  name="type"
-                  className="border rounded p-2 text-sm col-span-1 outline-none focus:border-blue-500"
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-8 flex-1 overflow-y-auto">
+            {/* Only show Add Task section if course is in My Study Plan (has an id) */}
+            {selectedCourseForDetails.id && (
+              <div className="bg-blue-50 p-3 sm:p-4 rounded-lg border border-blue-100">
+                <h3 className="font-bold text-blue-900 mb-2 sm:mb-3 text-xs sm:text-sm flex items-center gap-2">
+                  <Plus size={14} className="sm:w-4 sm:h-4" /> הוספת מטלה
+                </h3>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.target);
+                    addTask(selectedCourseForDetails.code, {
+                      title: fd.get("title"),
+                      date: fd.get("date"),
+                      type: fd.get("type"),
+                    });
+                    e.target.reset();
+                  }}
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3"
                 >
-                  <option value="maman">מטלה (ממ"ן)</option>
-                  <option value="exam">מבחן</option>
-                </select>
+                  <input
+                    required
+                    name="title"
+                    placeholder="שם (למשל: ממ״ן 11)"
+                    className="border rounded p-2 text-xs sm:text-sm outline-none focus:border-blue-500"
+                  />
+                  <input
+                    required
+                    name="date"
+                    type="date"
+                    className="border rounded p-2 text-xs sm:text-sm outline-none focus:border-blue-500"
+                  />
+                  <select
+                    name="type"
+                    className="border rounded p-2 text-xs sm:text-sm outline-none focus:border-blue-500"
+                  >
+                    <option value="maman">מטלה (ממ"ן)</option>
+                    <option value="exam">מבחן</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="bg-blue-600 text-white rounded p-2 text-xs sm:text-sm hover:bg-blue-700 font-medium sm:col-span-2 lg:col-span-1"
+                  >
+                    הוסף
+                  </button>
+                </form>
+              </div>
+            )}
+            {/* Show info message for catalog courses */}
+            {!selectedCourseForDetails.id && (
+              <div className="bg-blue-50 p-3 sm:p-4 rounded-lg border border-blue-100">
+                <p className="text-xs sm:text-sm text-blue-800 mb-2 sm:mb-3">
+                  כדי להוסיף מטלות ולערוך פרטים, יש להוסיף את הקורס ל"התכנית שלי" תחילה.
+                </p>
                 <button
-                  type="submit"
-                  className="bg-blue-600 text-white rounded p-2 text-sm hover:bg-blue-700 font-medium"
+                  onClick={() => {
+                    const courseToAdd = { ...selectedCourseForDetails };
+                    setSelectedCourseForDetails(null);
+                    addCourseToPlan(courseToAdd);
+                  }}
+                  className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-blue-700 transition-colors"
                 >
-                  הוסף
+                  הוסף לתכנית שלי
                 </button>
-              </form>
-            </div>
-            <div>
-              <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-                <Calendar size={16} /> פרטי קורס
-              </h3>
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">סמסטר:</label>
-                  <select
-                    value={selectedCourseForDetails.semester || ""}
-                    onChange={async (e) => {
-                      const newSemester = e.target.value;
-                      const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
-                      if (isLocalUser) {
-                        const updatedCourses = myCourses.map((c) =>
-                          c.id === selectedCourseForDetails.id ? { ...c, semester: newSemester } : c
-                        );
-                        localStorage.setItem("openu-courses", JSON.stringify(updatedCourses));
-                        setMyCourses(updatedCourses);
-                        setSelectedCourseForDetails({ ...selectedCourseForDetails, semester: newSemester });
-                      } else {
-                        try {
-                          await updateDoc(
-                            doc(db, "artifacts", appId, "users", user.uid, "courses", selectedCourseForDetails.id),
-                            { semester: newSemester }
+              </div>
+            )}
+            {/* Only show course details editing if course is in My Study Plan (has an id) */}
+            {selectedCourseForDetails.id && (
+              <div>
+                <h3 className="font-bold text-gray-800 mb-2 sm:mb-3 text-sm sm:text-base flex items-center gap-2">
+                  <Calendar size={14} className="sm:w-4 sm:h-4" /> פרטי קורס
+                </h3>
+                <div className="mb-4 p-2 sm:p-3 bg-gray-50 rounded-lg space-y-2 sm:space-y-3">
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">סטטוס:</label>
+                    <select
+                      value={selectedCourseForDetails.status || "planned"}
+                      onChange={async (e) => {
+                        const newStatus = e.target.value;
+                        await updateCourseStatus(selectedCourseForDetails.id, newStatus);
+                        setSelectedCourseForDetails({ ...selectedCourseForDetails, status: newStatus });
+                      }}
+                      className="w-full text-xs sm:text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                        <option key={key} value={key}>
+                          {config.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">סמסטר:</label>
+                    <select
+                      value={selectedCourseForDetails.semester || ""}
+                      onChange={async (e) => {
+                        const newSemester = e.target.value;
+                        const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
+                        if (isLocalUser) {
+                          const updatedCourses = myCourses.map((c) =>
+                            c.id === selectedCourseForDetails.id ? { ...c, semester: newSemester } : c
                           );
+                          localStorage.setItem("openu-courses", JSON.stringify(updatedCourses));
+                          setMyCourses(updatedCourses);
                           setSelectedCourseForDetails({ ...selectedCourseForDetails, semester: newSemester });
-                        } catch (error) {
-                          console.error("Error updating semester:", error);
+                        } else {
+                          try {
+                            await updateDoc(
+                              doc(db, "artifacts", appId, "users", user.uid, "courses", selectedCourseForDetails.id),
+                              { semester: newSemester }
+                            );
+                            setSelectedCourseForDetails({ ...selectedCourseForDetails, semester: newSemester });
+                          } catch (error) {
+                            console.error("Error updating semester:", error);
+                          }
                         }
-                      }
-                    }}
-                    className="w-full text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="">לא נבחר</option>
-                    <option value="סמסטר א'">סמסטר א'</option>
-                    <option value="סמסטר ב'">סמסטר ב'</option>
-                    <option value="סמסטר קיץ">סמסטר קיץ</option>
-                    <option value="לא רלוונטי">לא רלוונטי</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">שנה:</label>
-                  <select
-                    value={selectedCourseForDetails.year || ""}
-                    onChange={async (e) => {
-                      const newYear = e.target.value;
-                      const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
-                      if (isLocalUser) {
-                        const updatedCourses = myCourses.map((c) =>
-                          c.id === selectedCourseForDetails.id ? { ...c, year: newYear } : c
-                        );
-                        localStorage.setItem("openu-courses", JSON.stringify(updatedCourses));
-                        setMyCourses(updatedCourses);
-                        setSelectedCourseForDetails({ ...selectedCourseForDetails, year: newYear });
-                      } else {
-                        try {
-                          await updateDoc(
-                            doc(db, "artifacts", appId, "users", user.uid, "courses", selectedCourseForDetails.id),
-                            { year: newYear }
+                      }}
+                      className="w-full text-xs sm:text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">לא נבחר</option>
+                      <option value="סמסטר א'">סמסטר א'</option>
+                      <option value="סמסטר ב'">סמסטר ב'</option>
+                      <option value="סמסטר קיץ">סמסטר קיץ</option>
+                      <option value="לא רלוונטי">לא רלוונטי</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">שנה:</label>
+                    <select
+                      value={selectedCourseForDetails.year || ""}
+                      onChange={async (e) => {
+                        const newYear = e.target.value;
+                        const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
+                        if (isLocalUser) {
+                          const updatedCourses = myCourses.map((c) =>
+                            c.id === selectedCourseForDetails.id ? { ...c, year: newYear } : c
                           );
+                          localStorage.setItem("openu-courses", JSON.stringify(updatedCourses));
+                          setMyCourses(updatedCourses);
                           setSelectedCourseForDetails({ ...selectedCourseForDetails, year: newYear });
-                        } catch (error) {
-                          console.error("Error updating year:", error);
+                        } else {
+                          try {
+                            await updateDoc(
+                              doc(db, "artifacts", appId, "users", user.uid, "courses", selectedCourseForDetails.id),
+                              { year: newYear }
+                            );
+                            setSelectedCourseForDetails({ ...selectedCourseForDetails, year: newYear });
+                          } catch (error) {
+                            console.error("Error updating year:", error);
+                          }
                         }
-                      }
-                    }}
-                    className="w-full text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-green-500 outline-none"
-                  >
-                    <option value="">לא נבחר</option>
-                    <option value="2026">2026</option>
-                    <option value="2027">2027</option>
-                    <option value="2028">2028</option>
-                    <option value="2029">2029</option>
-                    <option value="2030">2030</option>
-                  </select>
+                      }}
+                      className="w-full text-xs sm:text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-green-500 outline-none"
+                    >
+                      <option value="">לא נבחר</option>
+                      <option value="2026">2026</option>
+                      <option value="2027">2027</option>
+                      <option value="2028">2028</option>
+                      <option value="2029">2029</option>
+                      <option value="2030">2030</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">הערות:</label>
+                    <textarea
+                      value={selectedCourseForDetails.comments || ""}
+                      onChange={async (e) => {
+                        const newComments = e.target.value;
+                        const isLocalUser = user?.isLocal || !firebaseAvailable || !db;
+                        if (isLocalUser) {
+                          const updatedCourses = myCourses.map((c) =>
+                            c.id === selectedCourseForDetails.id ? { ...c, comments: newComments } : c
+                          );
+                          localStorage.setItem("openu-courses", JSON.stringify(updatedCourses));
+                          setMyCourses(updatedCourses);
+                          setSelectedCourseForDetails({ ...selectedCourseForDetails, comments: newComments });
+                        } else {
+                          try {
+                            await updateDoc(
+                              doc(db, "artifacts", appId, "users", user.uid, "courses", selectedCourseForDetails.id),
+                              { comments: newComments }
+                            );
+                            setSelectedCourseForDetails({ ...selectedCourseForDetails, comments: newComments });
+                          } catch (error) {
+                            console.error("Error updating comments:", error);
+                          }
+                        }
+                      }}
+                      placeholder="הוסף הערות על הקורס..."
+                      className="w-full text-xs sm:text-sm border-gray-200 rounded-md bg-white p-2 focus:ring-2 focus:ring-blue-500 outline-none resize-y min-h-[60px] sm:min-h-[80px]"
+                      rows={3}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-            <div>
-              <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-                <Calendar size={16} /> לוח משימות קורס
-              </h3>
-              <div className="space-y-2">
-                {courseTasks.length === 0 && <p className="text-gray-400 text-sm italic">אין מטלות מוגדרות.</p>}
-                {courseTasks
-                  .sort((a, b) => new Date(a.date) - new Date(b.date))
-                  .map((task) => (
-                    <TaskItem key={task.id} task={task} />
-                  ))}
+            )}
+            {/* Only show tasks section if course is in My Study Plan (has an id) */}
+            {selectedCourseForDetails.id && (
+              <div>
+                <h3 className="font-bold text-gray-800 mb-2 sm:mb-3 text-sm sm:text-base flex items-center gap-2">
+                  <Calendar size={14} className="sm:w-4 sm:h-4" /> לוח משימות קורס
+                </h3>
+                <div className="space-y-2">
+                  {courseTasks.length === 0 && (
+                    <p className="text-gray-400 text-xs sm:text-sm italic">אין מטלות מוגדרות.</p>
+                  )}
+                  {courseTasks
+                    .sort((a, b) => new Date(a.date) - new Date(b.date))
+                    .map((task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -1581,28 +1977,23 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans" dir="rtl">
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab("dashboard")}>
-              <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-1.5 rounded-lg shadow-sm">
-                <Book size={20} />
-              </div>
-              <span className="font-bold text-lg tracking-tight text-slate-800">
-                OpenU<span className="text-blue-600">Manager</span>
-              </span>
-
-              {/* Sync Indicator */}
-              {user && (
-                <div className="mr-4 flex items-center gap-1.5 text-[10px] bg-gray-100 px-2 py-1 rounded-full text-gray-500 transition-all">
-                  {isSyncing ? <Loader2 className="animate-spin" size={10} /> : <Cloud size={10} />}
-                  {isSyncing ? "שומר..." : "נשמר בענן"}
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden" dir="rtl">
+      <nav className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm" dir="rtl">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4">
+          <div className="flex items-center justify-between h-14 sm:h-16 gap-2 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 md:gap-4 flex-1 min-w-0">
+              <div
+                className="flex items-center gap-1.5 sm:gap-2 cursor-pointer flex-shrink-0"
+                onClick={() => setActiveTab("dashboard")}
+              >
+                <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-1 sm:p-1.5 rounded-lg shadow-sm">
+                  <Book size={18} className="sm:w-5 sm:h-5" />
                 </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 md:gap-4">
-              <div className="hidden md:flex gap-1 bg-gray-100/50 p-1 rounded-xl">
+                <span className="font-bold text-base sm:text-lg tracking-tight text-slate-800 whitespace-nowrap">
+                  OpenU<span className="text-blue-600">Manager</span>
+                </span>
+              </div>
+              <div className="hidden md:flex gap-1 bg-gray-100/50 p-1 rounded-xl flex-shrink-0">
                 {[
                   { id: "dashboard", label: "ראשי" },
                   { id: "studies", label: "התכנית שלי" },
@@ -1612,7 +2003,7 @@ const App = () => {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    className={`px-2 sm:px-3 md:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
                       activeTab === tab.id ? "bg-white text-blue-700 shadow-sm" : "text-gray-500 hover:text-gray-900"
                     }`}
                   >
@@ -1620,64 +2011,75 @@ const App = () => {
                   </button>
                 ))}
               </div>
-
-              <div className="md:hidden flex gap-2">
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              <div className="relative flex-shrink-0">
                 <button
-                  onClick={() => setActiveTab("dashboard")}
-                  className={`p-2 rounded-lg ${
-                    activeTab === "dashboard" ? "bg-blue-50 text-blue-600" : "text-gray-500"
-                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowNotifications(!showNotifications);
+                  }}
+                  className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 relative text-gray-600 transition-colors"
+                  aria-label="התראות"
                 >
-                  <Smartphone size={20} />
-                </button>
-                <button
-                  onClick={() => setActiveTab("catalog")}
-                  className={`p-2 rounded-lg ${activeTab === "catalog" ? "bg-blue-50 text-blue-600" : "text-gray-500"}`}
-                >
-                  <Plus size={20} />
-                </button>
-              </div>
-
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="p-2 rounded-full hover:bg-gray-100 relative text-gray-600 transition-colors"
-                >
-                  <Bell size={20} />
-                  {urgentTasks.length > 0 && (
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
+                  <Bell size={18} className="sm:w-5 sm:h-5" />
+                  {unreadUrgentTasks.length > 0 && (
+                    <span className="absolute top-1 right-1 sm:top-1.5 sm:right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
                   )}
                 </button>
                 {showNotifications && (
-                  <div className="absolute left-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
-                    <div className="p-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                      <h3 className="font-bold text-gray-700 text-sm">התראות</h3>
-                      <button onClick={() => setShowNotifications(false)}>
-                        <X size={16} />
-                      </button>
+                  <>
+                    <div
+                      className="fixed inset-0 z-40 md:hidden bg-black/20"
+                      onClick={() => setShowNotifications(false)}
+                    />
+                    <div
+                      className="notification-popup fixed md:absolute top-16 md:top-auto right-2 md:right-0 mt-0 md:mt-2 w-[calc(100vw-1rem)] md:w-72 lg:w-80 max-w-sm bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2"
+                      dir="rtl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="p-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                        <h3 className="font-bold text-gray-700 text-sm">התראות</h3>
+                        <button onClick={() => setShowNotifications(false)} aria-label="סגור">
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto p-2">
+                        {urgentTasks.length === 0 ? (
+                          <div className="text-center text-gray-400 text-xs py-4">אין התראות חדשות</div>
+                        ) : (
+                          urgentTasks.map((t) => {
+                            const isRead = readNotifications.has(t.id);
+                            return (
+                              <div
+                                key={t.id}
+                                className="p-2 hover:bg-gray-50 rounded flex items-start gap-2 cursor-pointer"
+                                onClick={() => openCourseFromTask(t.courseId, t.id)}
+                              >
+                                {isRead ? (
+                                  <CheckCircle size={14} className="text-green-500 mt-0.5 flex-shrink-0" />
+                                ) : (
+                                  <AlertTriangle size={14} className="text-orange-500 mt-0.5 flex-shrink-0" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p
+                                    className={`text-xs font-bold truncate ${
+                                      isRead ? "text-gray-500" : "text-gray-800"
+                                    }`}
+                                  >
+                                    {t.title}
+                                  </p>
+                                  <p className="text-[10px] text-gray-500">
+                                    {new Date(t.date).toLocaleDateString("he-IL")}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
-                    <div className="max-h-64 overflow-y-auto p-2">
-                      {urgentTasks.length === 0 ? (
-                        <div className="text-center text-gray-400 text-xs py-4">אין התראות חדשות</div>
-                      ) : (
-                        urgentTasks.map((t) => (
-                          <div
-                            key={t.id}
-                            className="p-2 hover:bg-gray-50 rounded flex items-start gap-2 cursor-pointer"
-                            onClick={() => openCourseFromTask(t.courseId)}
-                          >
-                            <AlertTriangle size={14} className="text-orange-500 mt-0.5" />
-                            <div>
-                              <p className="text-xs font-bold text-gray-800">{t.title}</p>
-                              <p className="text-[10px] text-gray-500">
-                                {new Date(t.date).toLocaleDateString("he-IL")}
-                              </p>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  </>
                 )}
               </div>
 
@@ -1685,9 +2087,9 @@ const App = () => {
               {!user || user?.isLocal ? (
                 <button
                   onClick={() => handleLogin()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2"
+                  className="px-2 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs sm:text-sm font-medium flex items-center gap-1 sm:gap-2 whitespace-nowrap flex-shrink-0"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4" viewBox="0 0 24 24">
                     <path
                       fill="currentColor"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -1705,11 +2107,14 @@ const App = () => {
                       d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                     />
                   </svg>
-                  התחבר עם Google
+                  <span className="hidden sm:inline">התחבר עם Google</span>
+                  <span className="sm:hidden">התחבר</span>
                 </button>
               ) : (
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <span>{user.email || user.displayName || "מחובר"}</span>
+                <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm text-gray-600 flex-shrink-0 min-w-0">
+                  <span className="truncate max-w-[100px] sm:max-w-none">
+                    {user.email || user.displayName || "מחובר"}
+                  </span>
                   <button
                     onClick={async () => {
                       if (auth) {
@@ -1718,7 +2123,7 @@ const App = () => {
                         setFirebaseAvailable(false);
                       }
                     }}
-                    className="text-red-600 hover:text-red-700 text-xs underline"
+                    className="text-red-600 hover:text-red-700 text-xs underline whitespace-nowrap"
                   >
                     התנתק
                   </button>
@@ -1729,7 +2134,7 @@ const App = () => {
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 pb-20 md:pb-8">
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-6 sm:py-8 pb-20 md:pb-8 overflow-x-hidden">
         {activeTab === "dashboard" && <DashboardView />}
         {activeTab === "studies" && <MyStudiesView />}
         {activeTab === "tasks" && <TasksView />}
@@ -1737,24 +2142,27 @@ const App = () => {
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-2 z-40 flex justify-around">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-2 z-40 flex justify-around shadow-lg">
         {[
           { id: "dashboard", label: "ראשי", icon: Book },
-          { id: "studies", label: "לימודים", icon: GraduationCap },
+          { id: "studies", label: "התכנית שלי", icon: GraduationCap },
           { id: "tasks", label: "משימות", icon: CheckSquare },
           { id: "catalog", label: "קטלוג", icon: Search },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium w-16 ${
-              activeTab === tab.id ? "text-blue-600 bg-blue-50" : "text-gray-500"
-            }`}
-          >
-            <tab.icon size={18} />
-            {tab.label}
-          </button>
-        ))}
+        ].map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium w-16 transition-colors ${
+                activeTab === tab.id ? "text-blue-600 bg-blue-50" : "text-gray-500"
+              }`}
+            >
+              <Icon size={20} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {selectedCourseForDetails && <CourseDetailModal />}
@@ -1769,6 +2177,42 @@ const App = () => {
           }}
           onClose={() => setCourseToAdd(null)}
         />
+      )}
+
+      {/* Firebase Error Popup */}
+      {firebaseError && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setFirebaseError(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="bg-red-50 p-2 rounded-full">
+                <AlertTriangle className="text-red-600" size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-800 mb-2">שגיאת חיבור</h3>
+                <p className="text-sm text-gray-600 mb-4">{firebaseError}</p>
+                <button
+                  onClick={() => setFirebaseError(null)}
+                  className="w-full bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition-colors text-sm font-medium"
+                >
+                  הבנתי
+                </button>
+              </div>
+              <button
+                onClick={() => setFirebaseError(null)}
+                className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
