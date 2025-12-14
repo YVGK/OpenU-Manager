@@ -26,6 +26,9 @@ import {
   Cloud,
   Loader2,
   GripVertical,
+  Star,
+  User,
+  LogOut,
 } from "lucide-react";
 import {
   DndContext,
@@ -239,6 +242,7 @@ const CATEGORY_LABELS = {
   elective: { label: "בחירה", icon: BookMarked, color: "text-blue-600 bg-blue-50 border-blue-100" },
   seminar: { label: "סמינריון", icon: GraduationCap, color: "text-indigo-600 bg-indigo-50 border-indigo-100" },
   workshop: { label: "סדנה", icon: Wrench, color: "text-orange-600 bg-orange-50 border-orange-100" },
+  global: { label: "בחירה חופשית", icon: Star, color: "text-teal-600 bg-teal-50 border-teal-100" },
 };
 
 const App = () => {
@@ -946,20 +950,43 @@ const App = () => {
   const upcomingTasks = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
-    return tasks.filter((t) => !t.done && new Date(t.date) >= now).sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Include all non-done tasks (including overdue ones)
+    return tasks.filter((t) => !t.done).sort((a, b) => {
+      // Sort overdue tasks first, then by date
+      const aDate = new Date(a.date);
+      const bDate = new Date(b.date);
+      const aOverdue = aDate < now;
+      const bOverdue = bDate < now;
+      if (aOverdue && !bOverdue) return -1;
+      if (!aOverdue && bOverdue) return 1;
+      return aDate - bDate;
+    });
   }, [tasks]);
 
   const urgentTasks = useMemo(() => {
     const now = new Date();
+    now.setHours(0, 0, 0, 0);
     const threeDaysFromNow = new Date();
     threeDaysFromNow.setDate(now.getDate() + 3);
+    threeDaysFromNow.setHours(23, 59, 59, 999);
     return tasks
       .filter((t) => {
         if (t.done) return false;
         const taskDate = new Date(t.date);
-        return taskDate >= now && taskDate <= threeDaysFromNow;
+        taskDate.setHours(0, 0, 0, 0);
+        // Include overdue tasks (before today) and tasks due within 3 days
+        return taskDate <= threeDaysFromNow;
       })
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+      .sort((a, b) => {
+        // Sort overdue tasks first, then by date
+        const aDate = new Date(a.date);
+        const bDate = new Date(b.date);
+        const aOverdue = aDate < now;
+        const bOverdue = bDate < now;
+        if (aOverdue && !bOverdue) return -1;
+        if (!aOverdue && bOverdue) return 1;
+        return aDate - bDate;
+      });
   }, [tasks]);
 
   // Get unread urgent tasks
@@ -1093,19 +1120,19 @@ const App = () => {
       );
     }
     return (
-      <div className="flex items-center justify-between p-2 hover:bg-yellow-100/50 rounded transition-colors group">
-        <div className="flex items-center gap-2 overflow-hidden">
+      <div className="flex items-start justify-between p-2 hover:bg-yellow-100/50 rounded transition-colors group">
+        <div className="flex items-start gap-2 flex-1 min-w-0">
           <button
             onClick={() => togglePersonalTask(task.id)}
-            className={task.done ? "text-yellow-600/60" : "text-yellow-600"}
+            className={`shrink-0 mt-0.5 ${task.done ? "text-yellow-600/60" : "text-yellow-600"}`}
           >
             {task.done ? <CheckCircle size={16} /> : <Circle size={16} />}
           </button>
-          <span className={`text-sm truncate ${task.done ? "line-through text-gray-400" : "text-gray-800"}`}>
+          <span className={`text-sm break-words flex-1 ${task.done ? "line-through text-gray-400" : "text-gray-800"}`}>
             {task.text}
           </span>
         </div>
-        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
           <button onClick={() => setEditingPersonalTaskId(task.id)} className="p-1 text-gray-400 hover:text-blue-600">
             <Edit2 size={14} />
           </button>
@@ -1145,10 +1172,19 @@ const App = () => {
         </form>
       );
     }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const taskDate = new Date(task.date);
+    const isOverdue = !task.done && taskDate < today;
+    
     return (
       <div
         className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
-          task.done ? "bg-gray-50 border-gray-200" : "bg-white border-gray-200 hover:border-blue-300"
+          task.done 
+            ? "bg-gray-50 border-gray-200" 
+            : isOverdue 
+            ? "bg-red-50 border-red-300 hover:border-red-400" 
+            : "bg-white border-gray-200 hover:border-blue-300"
         }`}
       >
         <div className="flex items-center gap-3 flex-1 overflow-hidden">
@@ -1159,15 +1195,20 @@ const App = () => {
             {task.done ? <CheckCircle size={20} /> : <Circle size={20} />}
           </button>
           <div className={`flex-1 min-w-0 ${task.done ? "opacity-50" : ""}`}>
-            <p className={`font-medium text-gray-800 text-sm truncate ${task.done ? "line-through" : ""}`}>
+            <p className={`font-medium text-sm truncate ${task.done ? "line-through text-gray-600" : isOverdue ? "text-red-700" : "text-gray-800"}`}>
               {task.title}
             </p>
             <div className="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
-              <span className="flex items-center gap-1 shrink-0">
+              <span className={`flex items-center gap-1 shrink-0 ${isOverdue ? "text-red-600 font-medium" : ""}`}>
                 <Calendar size={10} /> {new Date(task.date).toLocaleDateString("he-IL")}
               </span>
+              {isOverdue && (
+                <span className="text-red-600 font-bold bg-red-100 px-1.5 py-0.5 rounded shrink-0">פג תוקף</span>
+              )}
               {task.type === "exam" && (
-                <span className="text-red-500 font-bold bg-red-50 px-1 rounded shrink-0">מבחן</span>
+                <span className="text-red-500 font-bold bg-red-50 px-1 rounded shrink-0">
+                  מבחן{task.moed ? ` - מועד ${task.moed === "A" ? "א'" : "ב'"}` : ""}
+                </span>
               )}
               {showCourseName && course && (
                 <button
@@ -1209,50 +1250,50 @@ const App = () => {
   };
 
   const DashboardView = () => (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28">
+    <div className="flex flex-col md:h-full space-y-2 sm:space-y-3 md:space-y-4 min-h-0">
+      <div className="grid grid-cols-3 md:grid-cols-3 gap-1.5 sm:gap-3 md:gap-4 shrink-0">
+        <div className="bg-white p-1.5 sm:p-3 md:p-4 rounded-lg sm:rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-12 sm:h-20 md:h-28">
           <div className="flex justify-between items-start">
-            <span className="text-gray-500 font-medium text-sm">נ"ז שנצברו</span>
-            <div className="bg-green-50 p-1.5 rounded-full">
-              <CheckCircle className="text-green-500 w-4 h-4" />
+            <span className="text-gray-500 font-medium text-[9px] sm:text-xs md:text-sm">נ"ז שנצברו</span>
+            <div className="bg-green-50 p-0.5 sm:p-1 md:p-1.5 rounded-full">
+              <CheckCircle className="text-green-500 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-bold text-gray-800">{totalNZ}</span>
-            <span className="text-sm text-gray-400 font-normal">/ 120</span>
+          <div className="flex items-baseline gap-0.5 sm:gap-1">
+            <span className="text-base sm:text-2xl md:text-3xl font-bold text-gray-800">{totalNZ}</span>
+            <span className="text-[8px] sm:text-xs md:text-sm text-gray-400 font-normal">/120</span>
           </div>
         </div>
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28">
+        <div className="bg-white p-1.5 sm:p-3 md:p-4 rounded-lg sm:rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-12 sm:h-20 md:h-28">
           <div className="flex justify-between items-start">
-            <span className="text-gray-500 font-medium text-sm">בלימודים כעת</span>
-            <div className="bg-orange-50 p-1.5 rounded-full">
-              <BookOpen className="text-orange-500 w-4 h-4" />
+            <span className="text-gray-500 font-medium text-[9px] sm:text-xs md:text-sm">בלימודים</span>
+            <div className="bg-orange-50 p-0.5 sm:p-1 md:p-1.5 rounded-full">
+              <BookOpen className="text-orange-500 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-bold text-gray-800">{activeNZ}</span>
-            <span className="text-sm text-gray-400 font-normal">נ"ז</span>
+          <div className="flex items-baseline gap-0.5 sm:gap-1">
+            <span className="text-base sm:text-2xl md:text-3xl font-bold text-gray-800">{activeNZ}</span>
+            <span className="text-[8px] sm:text-xs md:text-sm text-gray-400 font-normal">נ"ז</span>
           </div>
         </div>
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28">
+        <div className="bg-white p-1.5 sm:p-3 md:p-4 rounded-lg sm:rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-12 sm:h-20 md:h-28">
           <div className="flex justify-between items-start">
-            <span className="text-gray-500 font-medium text-sm">מטלות לביצוע</span>
-            <div className="bg-blue-50 p-1.5 rounded-full">
-              <Clock className="text-blue-500 w-4 h-4" />
+            <span className="text-gray-500 font-medium text-[9px] sm:text-xs md:text-sm">מטלות</span>
+            <div className="bg-blue-50 p-0.5 sm:p-1 md:p-1.5 rounded-full">
+              <Clock className="text-blue-500 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-bold text-gray-800">{tasks.filter((t) => !t.done).length}</span>
-            <span className="text-sm text-gray-400 font-normal">פתוחות</span>
+          <div className="flex items-baseline gap-0.5 sm:gap-1">
+            <span className="text-base sm:text-2xl md:text-3xl font-bold text-gray-800">{tasks.filter((t) => !t.done).length}</span>
+            <span className="text-[8px] sm:text-xs md:text-sm text-gray-400 font-normal">פתוחות</span>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 order-1">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full min-h-[400px] flex flex-col">
-            <div className="p-4 bg-blue-50/50 border-b border-gray-100 font-bold text-gray-700 flex items-center justify-between">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-6 md:flex-1 md:min-h-0">
+        <div className="lg:col-span-2 order-1 md:min-h-0 flex flex-col">
+          <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-100 overflow-hidden md:h-full flex flex-col min-h-[300px] sm:min-h-[350px] md:min-h-0">
+            <div className="p-3 sm:p-4 bg-blue-50/50 border-b border-gray-100 font-bold text-gray-700 flex items-center justify-between text-sm sm:text-base">
               <div className="flex items-center gap-2 text-blue-700">
                 <Calendar className="w-5 h-5" /> השבוע הקרוב והלאה
               </div>
@@ -1265,7 +1306,7 @@ const App = () => {
             </div>
 
             {urgentTasks.length > 0 && (
-              <div className="mx-4 mt-4 bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-start gap-3">
+              <div className="mx-3 sm:mx-4 mt-3 sm:mt-4 bg-orange-50 border border-orange-200 rounded-lg p-2 sm:p-3 flex items-start gap-2 sm:gap-3 shrink-0">
                 <AlertTriangle className="text-orange-500 shrink-0 mt-0.5" size={18} />
                 <div>
                   <h3 className="font-bold text-orange-800 text-sm">שים לב: מועדים קרובים</h3>
@@ -1298,7 +1339,7 @@ const App = () => {
               </div>
             )}
 
-            <div className="p-4 space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+            <div className="p-3 sm:p-4 space-y-2 sm:space-y-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {upcomingTasks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                   <CheckCircle size={48} className="mb-2 opacity-20" />
@@ -1311,13 +1352,13 @@ const App = () => {
           </div>
         </div>
 
-        <div className="lg:col-span-1 order-2">
-          <div className="bg-yellow-50 rounded-xl shadow-sm border border-yellow-100 flex flex-col h-[400px]">
-            <div className="p-4 border-b border-yellow-100 flex items-center gap-2 text-yellow-800 font-bold">
+        <div className="lg:col-span-1 order-2 md:min-h-0 flex flex-col">
+          <div className="bg-yellow-50 rounded-lg sm:rounded-xl shadow-sm border border-yellow-100 flex flex-col md:h-full min-h-[250px] sm:min-h-[300px] md:min-h-0">
+            <div className="p-3 sm:p-4 border-b border-yellow-100 flex items-center gap-2 text-yellow-800 font-bold text-sm sm:text-base">
               <ListChecks size={18} /> משימות אישיות
             </div>
 
-            <div className="p-3 border-b border-yellow-100 bg-yellow-50/50">
+            <div className="p-2 sm:p-3 border-b border-yellow-100 bg-yellow-50/50">
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -1337,7 +1378,7 @@ const App = () => {
               </form>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-2 sm:p-3 space-y-1 custom-scrollbar">
               {personalTasks.length === 0 ? (
                 <div className="text-center text-yellow-800/40 text-xs mt-10">אין משימות אישיות</div>
               ) : (
@@ -1401,6 +1442,354 @@ const App = () => {
             <TaskItem key={task.id} task={task} showCourseName={true} />
           ))}
         </div>
+      </div>
+    );
+  };
+
+  const AssignmentsExamsView = () => {
+    const [activeSection, setActiveSection] = useState("assignments"); // mobile helper
+    const [showAddExamModal, setShowAddExamModal] = useState(false);
+    const [newExamCourseId, setNewExamCourseId] = useState("");
+    const [newExamDate, setNewExamDate] = useState("");
+    const [newExamMoed, setNewExamMoed] = useState("A");
+
+    const today = useMemo(() => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }, []);
+
+    const activeCourses = useMemo(() => myCourses.filter((c) => c.status === "active"), [myCourses]);
+    const selectableCourses = activeCourses.length > 0 ? activeCourses : myCourses;
+
+    useEffect(() => {
+      if (!showAddExamModal) return;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }, [showAddExamModal]);
+
+    const assignments = useMemo(() => {
+      return tasks
+        .filter((t) => !t.done && (t.type === "maman" || t.type === "malah"))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    }, [tasks]);
+
+    const exams = useMemo(() => {
+      return tasks
+        .filter((t) => t.type === "exam" && !t.done)
+        .filter((t) => {
+          const d = new Date(t.date);
+          d.setHours(0, 0, 0, 0);
+          return d >= today;
+        })
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    }, [tasks, today]);
+
+    const getDaysDiff = (dateStr) => {
+      const d = new Date(dateStr);
+      d.setHours(0, 0, 0, 0);
+      return Math.round((d - today) / (1000 * 60 * 60 * 24));
+    };
+
+    const scrollTo = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const resetExamForm = () => {
+      setNewExamCourseId("");
+      setNewExamDate("");
+      setNewExamMoed("A");
+    };
+
+    const handleAddExam = async (e) => {
+      e.preventDefault();
+      if (!newExamCourseId || !newExamDate) return;
+
+      const moedLabel = newExamMoed === "A" ? "א'" : "ב'";
+      await addTask(newExamCourseId, {
+        title: `מבחן - מועד ${moedLabel}`,
+        date: newExamDate,
+        type: "exam",
+        moed: newExamMoed,
+      });
+
+      setShowAddExamModal(false);
+      resetExamForm();
+    };
+
+    return (
+      <div className="flex flex-col gap-3 md:gap-6">
+        {/* Mobile quick jump */}
+        <div className="md:hidden sticky top-[3.5rem] z-20 bg-slate-50/95 backdrop-blur border-b border-gray-200 -mx-3 px-3 py-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setActiveSection("assignments");
+                scrollTo("schedule-assignments");
+              }}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                activeSection === "assignments" ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200"
+              }`}
+            >
+              מטלות
+            </button>
+            <button
+              onClick={() => {
+                setActiveSection("exams");
+                scrollTo("schedule-exams");
+              }}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                activeSection === "exams" ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200"
+              }`}
+            >
+              מבחנים
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 md:gap-0 md:divide-x md:divide-gray-200 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {/* Left: Assignments */}
+          <section id="schedule-assignments" className="p-3 sm:p-4 md:p-5 bg-white">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                <CheckSquare className="text-blue-600" size={18} /> מעקב מטלות
+              </h2>
+              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{assignments.length} פתוחות</span>
+            </div>
+
+            <div className="space-y-2 max-h-[70vh] md:max-h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar pr-1">
+              {assignments.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 text-sm">אין מטלות פתוחות 🎉</div>
+              ) : (
+                assignments.map((t) => {
+                  const course = myCourses.find((c) => c.code === t.courseId);
+                  const days = getDaysDiff(t.date);
+                  const isOverdue = days < 0;
+                  const badge =
+                    days === 0 ? "היום" : isOverdue ? `באיחור ${Math.abs(days)} ימים` : `בעוד ${days} ימים`;
+
+                  return (
+                    <div
+                      key={t.id}
+                      className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
+                        isOverdue ? "bg-red-50 border-red-200" : "bg-white border-gray-200"
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className={`font-medium text-sm truncate ${isOverdue ? "text-red-800" : "text-gray-800"}`}>
+                            {t.title}
+                          </p>
+                          <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded shrink-0">
+                            {t.type === "malah" ? 'מנח"ה' : 'ממ"ן'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                          <span className="flex items-center gap-1 shrink-0">
+                            <Calendar size={12} /> {new Date(t.date).toLocaleDateString("he-IL")}
+                          </span>
+                          {course && (
+                            <span className="truncate">
+                              {course.name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${
+                          isOverdue ? "bg-red-100 text-red-700" : days <= 3 ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+
+          {/* Right: Exams */}
+          <section id="schedule-exams" className="p-3 sm:p-4 md:p-5 bg-slate-50/40">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                <Calendar className="text-red-600" size={18} /> לוח מבחנים
+              </h2>
+              {/* Add Exam button will be wired in the next todo */}
+              <button
+                onClick={() => setShowAddExamModal(true)}
+                className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium flex items-center gap-2 shadow-sm"
+              >
+                <Plus size={14} /> הוסף מבחן
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-[70vh] md:max-h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar pr-1">
+              {exams.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 text-sm">אין מבחנים מתוזמנים</div>
+              ) : (
+                exams.map((t) => {
+                  const course = myCourses.find((c) => c.code === t.courseId);
+                  const days = getDaysDiff(t.date);
+                  const isOverdue = days < 0;
+                  const badge =
+                    days === 0 ? "היום" : isOverdue ? `עבר לפני ${Math.abs(days)} ימים` : `בעוד ${days} ימים`;
+
+                  return (
+                    <div
+                      key={t.id}
+                      className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
+                        isOverdue ? "bg-red-50 border-red-200" : "bg-white border-gray-200"
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className={`font-medium text-sm truncate ${isOverdue ? "text-red-800" : "text-gray-800"}`}>
+                          {course ? course.name : t.courseId}
+                        </p>
+                        <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                          <span className="flex items-center gap-1 shrink-0">
+                            <Calendar size={12} /> {new Date(t.date).toLocaleDateString("he-IL")}
+                          </span>
+                          {t.moed && (
+                            <span className="text-[10px] bg-red-50 text-red-700 border border-red-100 px-1.5 py-0.5 rounded shrink-0 font-bold">
+                              מועד {t.moed}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${
+                          isOverdue ? "bg-red-100 text-red-700" : days <= 14 ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+        </div>
+
+        {showAddExamModal && (
+          <div
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowAddExamModal(false);
+                resetExamForm();
+              }
+            }}
+          >
+            <div className="bg-white rounded-xl w-full max-w-lg max-h-[95vh] overflow-hidden shadow-2xl flex flex-col" dir="rtl">
+              <div className="p-4 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-center gap-2">
+                <h3 className="text-lg font-bold text-gray-800">הוספת מבחן</h3>
+                <button
+                  onClick={() => {
+                    setShowAddExamModal(false);
+                    resetExamForm();
+                  }}
+                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 flex-shrink-0"
+                  aria-label="סגור"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddExam} className="p-4 space-y-4 overflow-y-auto">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">קורס</label>
+                  {selectableCourses.length === 0 ? (
+                    <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                      אין קורסים זמינים. הוסף קורס ל\"התכנית שלי\" כדי לקבוע לו מבחן.
+                    </div>
+                  ) : (
+                    <select
+                      required
+                      value={newExamCourseId}
+                      onChange={(e) => setNewExamCourseId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white outline-none focus:ring-2 focus:ring-red-500"
+                    >
+                      <option value="" disabled>
+                        בחר קורס...
+                      </option>
+                      {selectableCourses.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.name} ({c.code})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {activeCourses.length === 0 && myCourses.length > 0 && (
+                    <p className="text-[11px] text-gray-500 mt-1">לא נמצאו קורסים בסטטוס \"בלמידה פעילה\" — מציג את כל הקורסים.</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">תאריך מבחן</label>
+                  <input
+                    required
+                    type="date"
+                    value={newExamDate}
+                    onChange={(e) => setNewExamDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">מועד</label>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm cursor-pointer bg-white">
+                      <input
+                        type="radio"
+                        name="moed"
+                        value="A"
+                        checked={newExamMoed === "A"}
+                        onChange={() => setNewExamMoed("A")}
+                      />
+                      מועד א'
+                    </label>
+                    <label className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm cursor-pointer bg-white">
+                      <input
+                        type="radio"
+                        name="moed"
+                        value="B"
+                        checked={newExamMoed === "B"}
+                        onChange={() => setNewExamMoed("B")}
+                      />
+                      מועד ב'
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddExamModal(false);
+                      resetExamForm();
+                    }}
+                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg px-4 py-2 transition-colors text-sm font-medium"
+                  >
+                    ביטול
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={selectableCourses.length === 0}
+                    className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-lg px-4 py-2 transition-colors text-sm font-medium"
+                  >
+                    הוסף
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1706,6 +2095,7 @@ const App = () => {
                   <option value="elective">בחירה</option>
                   <option value="seminar">סמינריון</option>
                   <option value="workshop">סדנה</option>
+                  <option value="global">בחירה חופשית</option>
                 </select>
               </div>
 
@@ -1732,6 +2122,103 @@ const App = () => {
             </form>
           </div>
         </div>
+      </div>
+    );
+  };
+
+  // Degree Progress Panel Component
+  const DegreeProgressPanel = () => {
+    // Calculate points per category from finished courses
+    const finishedCourses = myCourses.filter((c) => c.status === "finished");
+    
+    const pointsByCategory = useMemo(() => {
+      const points = {
+        required_math: 0,
+        required_cs: 0,
+        elective: 0,
+        seminar: 0,
+        workshop: 0,
+        global: 0,
+      };
+      finishedCourses.forEach((course) => {
+        const cat = course.category || "elective";
+        if (points[cat] !== undefined) {
+          points[cat] += course.nz || 0;
+        }
+      });
+      return points;
+    }, [finishedCourses]);
+
+    // Degree requirements
+    const requirements = [
+      { key: "required_math", label: "חובה מתמטיקה", required: 35, color: "bg-purple-500" },
+      { key: "required_cs", label: "חובה מדמ״ח", required: 46, color: "bg-red-500" },
+      { key: "elective", label: "בחירה (מדמ״ח)", required: 24, color: "bg-blue-500", note: "מינימום" },
+      { key: "seminar_workshop", label: "סמינריון + סדנה", required: 6, color: "bg-indigo-500", combined: ["seminar", "workshop"] },
+      { key: "global", label: "בחירה חופשית", required: 9, color: "bg-teal-500" },
+    ];
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 sm:p-6 mb-4 sm:mb-6">
+        <h3 className="text-sm sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+          <GraduationCap size={16} className="sm:w-5 sm:h-5 text-blue-600" />
+          התקדמות לתואר
+        </h3>
+        
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4">
+          {requirements.map((req) => {
+            // Handle combined categories (e.g., seminar + workshop)
+            const completed = req.combined
+              ? req.combined.reduce((sum, cat) => sum + (pointsByCategory[cat] || 0), 0)
+              : (pointsByCategory[req.key] || 0);
+            const hasTarget = req.required !== null;
+            const percentage = hasTarget ? Math.min((completed / req.required) * 100, 100) : 0;
+            const isComplete = hasTarget && completed >= req.required;
+
+            return (
+              <div
+                key={req.key}
+                className={`p-2 sm:p-3 rounded-lg border ${
+                  isComplete ? "bg-green-50 border-green-200" : "bg-gray-50 border-gray-200"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1 sm:mb-2">
+                  <span className="text-[11px] sm:text-sm font-medium text-gray-700 leading-tight">{req.label}</span>
+                  {isComplete && (
+                    <span className="text-[10px] sm:text-xs bg-green-100 text-green-700 px-1 sm:px-2 py-0.5 rounded-full font-medium flex items-center gap-0.5">
+                      <CheckCircle size={10} className="sm:w-3 sm:h-3" />
+                      <span className="hidden sm:inline">הושלם</span>
+                    </span>
+                  )}
+                </div>
+                
+                {hasTarget ? (
+                  <>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 sm:h-2.5 mb-1 sm:mb-2">
+                      <div
+                        className={`h-1.5 sm:h-2.5 rounded-full transition-all duration-300 ${req.color}`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-gray-600">
+                      <span>
+                        {completed}/{req.required}
+                        <span className="hidden sm:inline"> נ״ז</span>
+                        {req.note && <span className="text-gray-400 mr-1 hidden sm:inline">({req.note})</span>}
+                      </span>
+                      <span>{Math.round(percentage)}%</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs sm:text-sm text-gray-600">
+                    {completed} נ״ז
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
       </div>
     );
   };
@@ -1809,6 +2296,9 @@ const App = () => {
         onDragEnd={handleDragEnd}
       >
         <div className="space-y-8">
+          {/* Degree Progress Panel */}
+          <DegreeProgressPanel />
+
           {/* Add New Course Button */}
           <div className="flex justify-end">
             <button
@@ -2117,6 +2607,7 @@ const App = () => {
                     className="border rounded p-2 text-xs sm:text-sm outline-none focus:border-blue-500"
                   >
                     <option value="maman">מטלה (ממ"ן)</option>
+                    <option value="malah">מטלה (מנח"ה)</option>
                     <option value="exam">מבחן</option>
                   </select>
                   <button
@@ -2321,7 +2812,7 @@ const App = () => {
                 {[
                   { id: "dashboard", label: "ראשי" },
                   { id: "studies", label: "התכנית שלי" },
-                  { id: "tasks", label: "משימות" },
+                  { id: "tasks", label: "לוח" },
                   { id: "catalog", label: "קטלוג" },
                 ].map((tab) => (
                   <button
@@ -2354,11 +2845,11 @@ const App = () => {
                 {showNotifications && (
                   <>
                     <div
-                      className="fixed inset-0 z-40 md:hidden bg-black/20"
+                      className="fixed inset-0 z-40 bg-black/20"
                       onClick={() => setShowNotifications(false)}
                     />
                     <div
-                      className="notification-popup fixed md:absolute top-16 md:top-auto right-2 md:right-0 mt-0 md:mt-2 w-[calc(100vw-1rem)] md:w-72 lg:w-80 max-w-sm bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2"
+                      className="notification-popup absolute top-full left-0 mt-2 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2"
                       dir="rtl"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -2435,10 +2926,10 @@ const App = () => {
                   <span className="sm:hidden">התחבר</span>
                 </button>
               ) : (
-                <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm text-gray-600 flex-shrink-0 min-w-0">
-                  <span className="truncate max-w-[100px] sm:max-w-none">
-                    {user.email || user.displayName || "מחובר"}
-                  </span>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <div className="bg-green-100 p-1.5 sm:p-2 rounded-full" title={user.email || user.displayName || "מחובר"}>
+                    <User size={16} className="sm:w-5 sm:h-5 text-green-600" />
+                  </div>
                   <button
                     onClick={async () => {
                       if (auth) {
@@ -2447,9 +2938,10 @@ const App = () => {
                         setFirebaseAvailable(false);
                       }
                     }}
-                    className="text-red-600 hover:text-red-700 text-xs underline whitespace-nowrap"
+                    className="p-1.5 sm:p-2 rounded-full hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                    title="התנתק"
                   >
-                    התנתק
+                    <LogOut size={16} className="sm:w-5 sm:h-5" />
                   </button>
                 </div>
               )}
@@ -2458,19 +2950,19 @@ const App = () => {
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-6 sm:py-8 pb-20 md:pb-8 overflow-x-hidden">
+      <main className={`max-w-6xl mx-auto px-2 sm:px-4 py-1 sm:py-4 md:py-4 pb-12 md:pb-4 overflow-x-hidden ${activeTab === "dashboard" ? "md:h-[calc(100vh-5rem)] md:flex md:flex-col md:min-h-0" : ""}`}>
         {activeTab === "dashboard" && <DashboardView />}
         {activeTab === "studies" && <MyStudiesView />}
-        {activeTab === "tasks" && <TasksView />}
+        {activeTab === "tasks" && <AssignmentsExamsView />}
         {activeTab === "catalog" && <CatalogView />}
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-2 z-40 flex justify-around shadow-lg">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-1 py-1 z-40 flex justify-around shadow-lg">
         {[
           { id: "dashboard", label: "ראשי", icon: Book },
-          { id: "studies", label: "התכנית שלי", icon: GraduationCap },
-          { id: "tasks", label: "משימות", icon: CheckSquare },
+          { id: "studies", label: "התכנית", icon: GraduationCap },
+          { id: "tasks", label: "לוח", icon: Calendar },
           { id: "catalog", label: "קטלוג", icon: Search },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -2478,11 +2970,11 @@ const App = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium w-16 transition-colors ${
+              className={`flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[9px] font-medium w-14 transition-colors ${
                 activeTab === tab.id ? "text-blue-600 bg-blue-50" : "text-gray-500"
               }`}
             >
-              <Icon size={20} />
+              <Icon size={18} />
               <span>{tab.label}</span>
             </button>
           );
