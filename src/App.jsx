@@ -1259,9 +1259,9 @@ const App = () => {
               <CheckCircle className="text-green-500 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
             </div>
           </div>
-          <div className="flex items-baseline gap-0.5 sm:gap-1">
-            <span className="text-base sm:text-2xl md:text-3xl font-bold text-gray-800">{totalNZ}</span>
-            <span className="text-[8px] sm:text-xs md:text-sm text-gray-400 font-normal">/120</span>
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl font-bold text-gray-800">{totalNZ}</span>
+            <span className="text-sm text-gray-400 font-normal">/ 120</span>
           </div>
         </div>
         <div className="bg-white p-1.5 sm:p-3 md:p-4 rounded-lg sm:rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-12 sm:h-20 md:h-28">
@@ -1446,354 +1446,6 @@ const App = () => {
     );
   };
 
-  const AssignmentsExamsView = () => {
-    const [activeSection, setActiveSection] = useState("assignments"); // mobile helper
-    const [showAddExamModal, setShowAddExamModal] = useState(false);
-    const [newExamCourseId, setNewExamCourseId] = useState("");
-    const [newExamDate, setNewExamDate] = useState("");
-    const [newExamMoed, setNewExamMoed] = useState("A");
-
-    const today = useMemo(() => {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      return d;
-    }, []);
-
-    const activeCourses = useMemo(() => myCourses.filter((c) => c.status === "active"), [myCourses]);
-    const selectableCourses = activeCourses.length > 0 ? activeCourses : myCourses;
-
-    useEffect(() => {
-      if (!showAddExamModal) return;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = "";
-      };
-    }, [showAddExamModal]);
-
-    const assignments = useMemo(() => {
-      return tasks
-        .filter((t) => !t.done && (t.type === "maman" || t.type === "malah"))
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-    }, [tasks]);
-
-    const exams = useMemo(() => {
-      return tasks
-        .filter((t) => t.type === "exam" && !t.done)
-        .filter((t) => {
-          const d = new Date(t.date);
-          d.setHours(0, 0, 0, 0);
-          return d >= today;
-        })
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-    }, [tasks, today]);
-
-    const getDaysDiff = (dateStr) => {
-      const d = new Date(dateStr);
-      d.setHours(0, 0, 0, 0);
-      return Math.round((d - today) / (1000 * 60 * 60 * 24));
-    };
-
-    const scrollTo = (id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-
-    const resetExamForm = () => {
-      setNewExamCourseId("");
-      setNewExamDate("");
-      setNewExamMoed("A");
-    };
-
-    const handleAddExam = async (e) => {
-      e.preventDefault();
-      if (!newExamCourseId || !newExamDate) return;
-
-      const moedLabel = newExamMoed === "A" ? "א'" : "ב'";
-      await addTask(newExamCourseId, {
-        title: `מבחן - מועד ${moedLabel}`,
-        date: newExamDate,
-        type: "exam",
-        moed: newExamMoed,
-      });
-
-      setShowAddExamModal(false);
-      resetExamForm();
-    };
-
-    return (
-      <div className="flex flex-col gap-3 md:gap-6">
-        {/* Mobile quick jump */}
-        <div className="md:hidden sticky top-[3.5rem] z-20 bg-slate-50/95 backdrop-blur border-b border-gray-200 -mx-3 px-3 py-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setActiveSection("assignments");
-                scrollTo("schedule-assignments");
-              }}
-              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                activeSection === "assignments" ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200"
-              }`}
-            >
-              מטלות
-            </button>
-            <button
-              onClick={() => {
-                setActiveSection("exams");
-                scrollTo("schedule-exams");
-              }}
-              className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                activeSection === "exams" ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200"
-              }`}
-            >
-              מבחנים
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 md:gap-0 md:divide-x md:divide-gray-200 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* Left: Assignments */}
-          <section id="schedule-assignments" className="p-3 sm:p-4 md:p-5 bg-white">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold text-gray-800 flex items-center gap-2">
-                <CheckSquare className="text-blue-600" size={18} /> מעקב מטלות
-              </h2>
-              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{assignments.length} פתוחות</span>
-            </div>
-
-            <div className="space-y-2 max-h-[70vh] md:max-h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar pr-1">
-              {assignments.length === 0 ? (
-                <div className="text-center text-gray-400 py-10 text-sm">אין מטלות פתוחות 🎉</div>
-              ) : (
-                assignments.map((t) => {
-                  const course = myCourses.find((c) => c.code === t.courseId);
-                  const days = getDaysDiff(t.date);
-                  const isOverdue = days < 0;
-                  const badge =
-                    days === 0 ? "היום" : isOverdue ? `באיחור ${Math.abs(days)} ימים` : `בעוד ${days} ימים`;
-
-                  return (
-                    <div
-                      key={t.id}
-                      className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
-                        isOverdue ? "bg-red-50 border-red-200" : "bg-white border-gray-200"
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className={`font-medium text-sm truncate ${isOverdue ? "text-red-800" : "text-gray-800"}`}>
-                            {t.title}
-                          </p>
-                          <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded shrink-0">
-                            {t.type === "malah" ? 'מנח"ה' : 'ממ"ן'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
-                          <span className="flex items-center gap-1 shrink-0">
-                            <Calendar size={12} /> {new Date(t.date).toLocaleDateString("he-IL")}
-                          </span>
-                          {course && (
-                            <span className="truncate">
-                              {course.name}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${
-                          isOverdue ? "bg-red-100 text-red-700" : days <= 3 ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {badge}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
-          {/* Right: Exams */}
-          <section id="schedule-exams" className="p-3 sm:p-4 md:p-5 bg-slate-50/40">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold text-gray-800 flex items-center gap-2">
-                <Calendar className="text-red-600" size={18} /> לוח מבחנים
-              </h2>
-              {/* Add Exam button will be wired in the next todo */}
-              <button
-                onClick={() => setShowAddExamModal(true)}
-                className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium flex items-center gap-2 shadow-sm"
-              >
-                <Plus size={14} /> הוסף מבחן
-              </button>
-            </div>
-
-            <div className="space-y-2 max-h-[70vh] md:max-h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar pr-1">
-              {exams.length === 0 ? (
-                <div className="text-center text-gray-400 py-10 text-sm">אין מבחנים מתוזמנים</div>
-              ) : (
-                exams.map((t) => {
-                  const course = myCourses.find((c) => c.code === t.courseId);
-                  const days = getDaysDiff(t.date);
-                  const isOverdue = days < 0;
-                  const badge =
-                    days === 0 ? "היום" : isOverdue ? `עבר לפני ${Math.abs(days)} ימים` : `בעוד ${days} ימים`;
-
-                  return (
-                    <div
-                      key={t.id}
-                      className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
-                        isOverdue ? "bg-red-50 border-red-200" : "bg-white border-gray-200"
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className={`font-medium text-sm truncate ${isOverdue ? "text-red-800" : "text-gray-800"}`}>
-                          {course ? course.name : t.courseId}
-                        </p>
-                        <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
-                          <span className="flex items-center gap-1 shrink-0">
-                            <Calendar size={12} /> {new Date(t.date).toLocaleDateString("he-IL")}
-                          </span>
-                          {t.moed && (
-                            <span className="text-[10px] bg-red-50 text-red-700 border border-red-100 px-1.5 py-0.5 rounded shrink-0 font-bold">
-                              מועד {t.moed}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${
-                          isOverdue ? "bg-red-100 text-red-700" : days <= 14 ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {badge}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </section>
-        </div>
-
-        {showAddExamModal && (
-          <div
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setShowAddExamModal(false);
-                resetExamForm();
-              }
-            }}
-          >
-            <div className="bg-white rounded-xl w-full max-w-lg max-h-[95vh] overflow-hidden shadow-2xl flex flex-col" dir="rtl">
-              <div className="p-4 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-center gap-2">
-                <h3 className="text-lg font-bold text-gray-800">הוספת מבחן</h3>
-                <button
-                  onClick={() => {
-                    setShowAddExamModal(false);
-                    resetExamForm();
-                  }}
-                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 flex-shrink-0"
-                  aria-label="סגור"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <form onSubmit={handleAddExam} className="p-4 space-y-4 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">קורס</label>
-                  {selectableCourses.length === 0 ? (
-                    <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                      אין קורסים זמינים. הוסף קורס ל\"התכנית שלי\" כדי לקבוע לו מבחן.
-                    </div>
-                  ) : (
-                    <select
-                      required
-                      value={newExamCourseId}
-                      onChange={(e) => setNewExamCourseId(e.target.value)}
-                      className="w-full border border-gray-200 rounded-lg p-2 text-sm bg-white outline-none focus:ring-2 focus:ring-red-500"
-                    >
-                      <option value="" disabled>
-                        בחר קורס...
-                      </option>
-                      {selectableCourses.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.name} ({c.code})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {activeCourses.length === 0 && myCourses.length > 0 && (
-                    <p className="text-[11px] text-gray-500 mt-1">לא נמצאו קורסים בסטטוס \"בלמידה פעילה\" — מציג את כל הקורסים.</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">תאריך מבחן</label>
-                  <input
-                    required
-                    type="date"
-                    value={newExamDate}
-                    onChange={(e) => setNewExamDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">מועד</label>
-                  <div className="flex gap-3">
-                    <label className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm cursor-pointer bg-white">
-                      <input
-                        type="radio"
-                        name="moed"
-                        value="A"
-                        checked={newExamMoed === "A"}
-                        onChange={() => setNewExamMoed("A")}
-                      />
-                      מועד א'
-                    </label>
-                    <label className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 text-sm cursor-pointer bg-white">
-                      <input
-                        type="radio"
-                        name="moed"
-                        value="B"
-                        checked={newExamMoed === "B"}
-                        onChange={() => setNewExamMoed("B")}
-                      />
-                      מועד ב'
-                    </label>
-                  </div>
-                </div>
-
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAddExamModal(false);
-                      resetExamForm();
-                    }}
-                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg px-4 py-2 transition-colors text-sm font-medium"
-                  >
-                    ביטול
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={selectableCourses.length === 0}
-                    className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-lg px-4 py-2 transition-colors text-sm font-medium"
-                  >
-                    הוסף
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // Sortable Course Card Component
   const SortableCourseCard = ({ course, isDragging }) => {
     const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -1845,6 +1497,501 @@ const App = () => {
               <Trash2 size={16} />
             </button>
           </div>
+        </div>
+        <h3
+          className="font-bold text-gray-800 mb-1 truncate cursor-pointer hover:text-blue-600"
+          onClick={() => setSelectedCourseForDetails(course)}
+          title={course.name}
+        >
+          {course.name}
+        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm text-gray-500">{course.nz} נ"ז</p>
+            {course.semester && (
+              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium">
+                {course.semester}
+              </span>
+            )}
+            {course.year && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">{course.year}</span>
+            )}
+          </div>
+          {course.category && CATEGORY_LABELS[course.category] && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${CATEGORY_LABELS[course.category].color}`}>
+              {CATEGORY_LABELS[course.category].label}
+            </span>
+          )}
+        </div>
+        <select
+          className="w-full text-sm border-gray-200 rounded-md bg-gray-50 p-1.5 focus:ring-2 focus:ring-blue-500 outline-none"
+          value={course.status}
+          onChange={(e) => updateCourseStatus(course.id, e.target.value)}
+        >
+          {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+            <option key={key} value={key}>
+              {config.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  };
+
+  // Droppable Status Container Component
+  const DroppableStatusContainer = ({ statusKey, courses, label }) => {
+    const { setNodeRef, isOver } = useDroppable({
+      id: `status-${statusKey}`,
+    });
+
+    return (
+      <div
+        ref={setNodeRef}
+        className={`space-y-3 ${isOver ? "bg-blue-50 rounded-lg p-2 border-2 border-blue-300 border-dashed" : ""}`}
+      >
+        <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+          {label}
+          <span className="text-sm font-normal text-gray-400">({courses.length})</span>
+        </h2>
+        {courses.length === 0 && (
+          <div className="p-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm text-center min-h-[100px] flex items-center justify-center">
+            אין קורסים בסטטוס זה
+          </div>
+        )}
+        <SortableContext items={courses.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {courses.map((course) => (
+              <SortableCourseCard key={course.id} course={course} />
+            ))}
+          </div>
+        </SortableContext>
+      </div>
+    );
+  };
+
+  const AddNewCourseModal = () => {
+    const [formData, setFormData] = useState({
+      code: "",
+      name: "",
+      nz: "",
+      category: "",
+    });
+    const [errors, setErrors] = useState({});
+
+    // Prevent body scroll when modal is open on mobile
+    useEffect(() => {
+      if (showNewCourseModal) {
+        document.body.style.overflow = "hidden";
+      }
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }, [showNewCourseModal]);
+
+    const validateForm = () => {
+      const newErrors = {};
+      if (!formData.code.trim()) {
+        newErrors.code = "מספר קורס הוא שדה חובה";
+      } else if (!/^\d+$/.test(formData.code.trim())) {
+        newErrors.code = "מספר קורס חייב להכיל רק ספרות";
+      }
+      if (!formData.name.trim()) {
+        newErrors.name = "שם קורס הוא שדה חובה";
+      }
+      const nzValue = Number(formData.nz);
+      if (!formData.nz || isNaN(nzValue) || nzValue < 0 || nzValue > 20) {
+        newErrors.nz = "נ\"ז הוא שדה חובה (חייב להיות בין 0 ל-20)";
+      }
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    };
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      if (!validateForm()) return;
+
+      // Check if course code already exists in catalog
+      if (catalog.find((c) => c.code === formData.code.trim())) {
+        setErrors({ code: "קורס עם מספר זה כבר קיים בקטלוג" });
+        return;
+      }
+
+      // Create course object
+      const newCourse = {
+        code: formData.code.trim(),
+        name: formData.name.trim(),
+        nz: Number(formData.nz),
+        ...(formData.category && { category: formData.category }),
+      };
+
+      // Add course to catalog
+      const success = await addCourseToCatalog(newCourse);
+      if (!success) {
+        setErrors({ code: "שגיאה בהוספת הקורס לקטלוג" });
+        return;
+      }
+
+      // Close modal and reset form
+      setShowNewCourseModal(false);
+      setFormData({ code: "", name: "", nz: "", category: "" });
+      setErrors({});
+    };
+
+    if (!showNewCourseModal) return null;
+
+    return (
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setShowNewCourseModal(false);
+            setFormData({ code: "", name: "", nz: "", category: "" });
+            setErrors({});
+          }
+        }}
+      >
+        <div className="bg-white rounded-xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+          <div className="p-3 sm:p-6 border-b border-gray-100 sticky top-0 bg-white z-10 flex justify-between items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-gray-800">הוסף קורס חדש</h2>
+            <button
+              onClick={() => {
+                setShowNewCourseModal(false);
+                setFormData({ code: "", name: "", nz: "", category: "" });
+                setErrors({});
+              }}
+              className="p-1.5 sm:p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 flex-shrink-0"
+            >
+              <X size={18} className="sm:w-5 sm:h-5" />
+            </button>
+          </div>
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto">
+            <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6" dir="rtl">
+              {/* Course Code */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  מספר קורס <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={formData.code}
+                  onChange={(e) => {
+                    // Only allow numeric input
+                    const value = e.target.value.replace(/\D/g, "");
+                    setFormData({ ...formData, code: value });
+                    if (errors.code) setErrors({ ...errors, code: "" });
+                  }}
+                  placeholder="למשל: 20476"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.code ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.code && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.code}</p>}
+              </div>
+
+              {/* Course Name */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  שם קורס <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value });
+                    if (errors.name) setErrors({ ...errors, name: "" });
+                  }}
+                  placeholder="שם הקורס"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.name ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.name && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.name}</p>}
+              </div>
+
+              {/* נ"ז Credits */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  נ"ז <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={formData.nz}
+                  onChange={(e) => {
+                    setFormData({ ...formData, nz: e.target.value });
+                    if (errors.nz) setErrors({ ...errors, nz: "" });
+                  }}
+                  placeholder="מספר נקודות זכות"
+                  className={`w-full text-sm sm:text-base border rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none ${
+                    errors.nz ? "border-red-500" : "border-gray-200"
+                  }`}
+                />
+                {errors.nz && <p className="text-red-500 text-xs sm:text-sm mt-1">{errors.nz}</p>}
+              </div>
+
+              {/* Category (Optional) */}
+              <div>
+                <label className="block text-sm sm:text-base font-medium text-gray-700 mb-1 sm:mb-2">
+                  קטגוריה (אופציונלי)
+                </label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="w-full text-sm sm:text-base border border-gray-200 rounded-md p-2 sm:p-3 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                >
+                  <option value="">לא נבחר</option>
+                  <option value="required_math">חובה מתמטיקה</option>
+                  <option value="required_cs">חובה מדמ״ח</option>
+                  <option value="elective">בחירה</option>
+                  <option value="seminar">סמינריון</option>
+                  <option value="workshop">סדנה</option>
+                </select>
+              </div>
+
+              {/* Submit Button */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewCourseModal(false);
+                    setFormData({ code: "", name: "", nz: "", category: "" });
+                    setErrors({});
+                  }}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg p-2 sm:p-3 text-sm sm:text-base font-medium transition-colors"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg p-2 sm:p-3 text-sm sm:text-base font-medium transition-colors"
+                >
+                  הוסף קורס
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const MyStudiesView = () => {
+    const [activeId, setActiveId] = useState(null);
+    const sensors = useSensors(
+      useSensor(PointerSensor),
+      useSensor(KeyboardSensor, {
+        coordinateGetter: sortableKeyboardCoordinates,
+      })
+    );
+
+    // Filter courses by semester if selected
+    const filteredCourses = useMemo(() => {
+      if (selectedSemester === "all") return myCourses;
+      return myCourses.filter((c) => c.semester === selectedSemester);
+    }, [myCourses, selectedSemester]);
+
+    const scrollTo = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const resetExamForm = () => {
+      setNewExamCourseId("");
+      setNewExamDate("");
+      setNewExamMoed("A");
+    };
+
+    const handleAddExam = async (e) => {
+      e.preventDefault();
+      if (!newExamCourseId || !newExamDate) return;
+
+      const moedLabel = newExamMoed === "A" ? "א'" : "ב'";
+      await addTask(newExamCourseId, {
+        title: `מבחן - מועד ${moedLabel}`,
+        date: newExamDate,
+        type: "exam",
+        moed: newExamMoed,
+      });
+
+      setShowAddExamModal(false);
+      resetExamForm();
+    };
+
+    const handleDragEnd = (event) => {
+      const { active, over } = event;
+
+      if (!over) {
+        setActiveId(null);
+        return;
+      }
+
+      const activeId = active.id;
+      const overId = over.id;
+
+      // Find the course being dragged
+      const draggedCourse = myCourses.find((c) => c.id === activeId);
+      if (!draggedCourse) {
+        setActiveId(null);
+        return;
+      }
+
+      // Check if dropped on a status container
+      if (overId.toString().startsWith("status-")) {
+        const newStatus = overId.toString().replace("status-", "");
+        if (newStatus !== draggedCourse.status) {
+          updateCourseStatus(activeId, newStatus);
+        }
+      }
+
+      setActiveId(null);
+    };
+
+    const draggedCourse = activeId ? myCourses.find((c) => c.id === activeId) : null;
+
+    return (
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={(e) => setActiveId(e.active.id)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="space-y-8">
+          {/* Add New Course Button */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowNewCourseModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors font-medium text-sm sm:text-base"
+            >
+              <Plus size={18} className="sm:w-5 sm:h-5" />
+              הוסף קורס חדש
+            </button>
+          </div>
+
+          {/* Semester and Year Filters */}
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                <Calendar size={16} /> סינון לפי סמסטר ושנה
+              </h3>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setSelectedSemester("all")}
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                    selectedSemester === "all"
+                      ? "bg-blue-600 text-white shadow-sm font-medium"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  כל הסמסטרים
+                </button>
+                {availableSemesters.map((sem) => (
+                  <button
+                    key={sem}
+                    onClick={() => setSelectedSemester(sem)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                      selectedSemester === sem
+                        ? "bg-blue-600 text-white shadow-sm font-medium"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {sem}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between flex-wrap gap-3 border-t border-gray-200 pt-4">
+              <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                <Calendar size={16} /> שנה
+              </h3>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setSelectedYear("all")}
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                    selectedYear === "all"
+                      ? "bg-green-600 text-white shadow-sm font-medium"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  כל השנים
+                </button>
+                {availableYears.map((year) => (
+                  <button
+                    key={year}
+                    onClick={() => setSelectedYear(year)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                      selectedYear === year
+                        ? "bg-green-600 text-white shadow-sm font-medium"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {year}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {["active", "registered", "planned", "finished"].map((statusKey) => (
+            <DroppableStatusContainer
+              key={statusKey}
+              statusKey={statusKey}
+              courses={groupedCourses[statusKey]}
+              label={STATUS_CONFIG[statusKey].label}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {draggedCourse ? (
+            <div className="bg-white p-4 rounded-lg shadow-lg border-2 border-blue-400 opacity-90 rotate-2">
+              <div className="flex justify-between items-start mb-2">
+                <span className="bg-gray-100 text-gray-600 text-[10px] font-mono px-1.5 py-0.5 rounded">
+                  {draggedCourse.code}
+                </span>
+              </div>
+              <h3 className="font-bold text-gray-800 mb-1 truncate">{draggedCourse.name}</h3>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    );
+  };
+
+  const CatalogView = () => {
+    const filteredCatalog = useMemo(() => {
+      return catalog.filter((c) => c.name.includes(searchTerm) || c.code.includes(searchTerm));
+    }, [searchTerm, catalog]);
+
+    const style = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-full">
+        {/* Search and Add Button */}
+        <div className="p-4 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+          <h2 className="text-lg font-bold text-gray-800 hidden md:block">קטלוג קורסים</h2>
+          <div className="relative flex-1">
+            <Search className="absolute right-3 top-2.5 text-gray-400 w-4 h-4" />
+            <input
+              type="text"
+              placeholder="חיפוש קורס לפי שם או קוד..."
+              className="w-full pr-10 pl-4 py-2 border rounded-lg text-sm outline-none focus:border-blue-500"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={() => setShowNewCourseModal(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-lg shadow-sm transition-colors font-medium text-sm sm:text-base whitespace-nowrap"
+          >
+            <Plus size={18} className="sm:w-5 sm:h-5" />
+            הוסף קורס חדש
+          </button>
         </div>
         <h3
           className="font-bold text-gray-800 mb-1 truncate cursor-pointer hover:text-blue-600"
@@ -2607,7 +2754,6 @@ const App = () => {
                     className="border rounded p-2 text-xs sm:text-sm outline-none focus:border-blue-500"
                   >
                     <option value="maman">מטלה (ממ"ן)</option>
-                    <option value="malah">מטלה (מנח"ה)</option>
                     <option value="exam">מבחן</option>
                   </select>
                   <button
@@ -2845,11 +2991,11 @@ const App = () => {
                 {showNotifications && (
                   <>
                     <div
-                      className="fixed inset-0 z-40 bg-black/20"
+                      className="fixed inset-0 z-40 md:hidden bg-black/20"
                       onClick={() => setShowNotifications(false)}
                     />
                     <div
-                      className="notification-popup absolute top-full left-0 mt-2 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2"
+                      className="notification-popup fixed md:absolute top-16 md:top-auto right-2 md:right-0 mt-0 md:mt-2 w-[calc(100vw-1rem)] md:w-72 lg:w-80 max-w-sm bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2"
                       dir="rtl"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -2926,10 +3072,10 @@ const App = () => {
                   <span className="sm:hidden">התחבר</span>
                 </button>
               ) : (
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <div className="bg-green-100 p-1.5 sm:p-2 rounded-full" title={user.email || user.displayName || "מחובר"}>
-                    <User size={16} className="sm:w-5 sm:h-5 text-green-600" />
-                  </div>
+                <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm text-gray-600 flex-shrink-0 min-w-0">
+                  <span className="truncate max-w-[100px] sm:max-w-none">
+                    {user.email || user.displayName || "מחובר"}
+                  </span>
                   <button
                     onClick={async () => {
                       if (auth) {
@@ -2938,8 +3084,7 @@ const App = () => {
                         setFirebaseAvailable(false);
                       }
                     }}
-                    className="p-1.5 sm:p-2 rounded-full hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                    title="התנתק"
+                    className="text-red-600 hover:text-red-700 text-xs underline whitespace-nowrap"
                   >
                     <LogOut size={16} className="sm:w-5 sm:h-5" />
                   </button>
@@ -2950,7 +3095,7 @@ const App = () => {
         </div>
       </nav>
 
-      <main className={`max-w-6xl mx-auto px-2 sm:px-4 py-1 sm:py-4 md:py-4 pb-12 md:pb-4 overflow-x-hidden ${activeTab === "dashboard" ? "md:h-[calc(100vh-5rem)] md:flex md:flex-col md:min-h-0" : ""}`}>
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-6 sm:py-8 pb-20 md:pb-8 overflow-x-hidden">
         {activeTab === "dashboard" && <DashboardView />}
         {activeTab === "studies" && <MyStudiesView />}
         {activeTab === "tasks" && <AssignmentsExamsView />}
@@ -2958,11 +3103,11 @@ const App = () => {
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-1 py-1 z-40 flex justify-around shadow-lg">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-2 z-40 flex justify-around shadow-lg">
         {[
           { id: "dashboard", label: "ראשי", icon: Book },
-          { id: "studies", label: "התכנית", icon: GraduationCap },
-          { id: "tasks", label: "לוח", icon: Calendar },
+          { id: "studies", label: "התכנית שלי", icon: GraduationCap },
+          { id: "tasks", label: "משימות", icon: CheckSquare },
           { id: "catalog", label: "קטלוג", icon: Search },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -2970,11 +3115,11 @@ const App = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[9px] font-medium w-14 transition-colors ${
+              className={`flex flex-col items-center gap-1 p-2 rounded-lg text-[10px] font-medium w-16 transition-colors ${
                 activeTab === tab.id ? "text-blue-600 bg-blue-50" : "text-gray-500"
               }`}
             >
-              <Icon size={18} />
+              <Icon size={20} />
               <span>{tab.label}</span>
             </button>
           );
